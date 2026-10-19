@@ -2,6 +2,11 @@ import json
 import subprocess
 import sys
 import unittest
+from unittest.mock import patch
+from contextlib import redirect_stdout, redirect_stderr
+from io import StringIO
+
+from plan_fixture import valid_plan
 
 
 class CliTests(unittest.TestCase):
@@ -12,15 +17,19 @@ class CliTests(unittest.TestCase):
         )
 
     def test_success(self):
+        from research_assistant.cli import main
         topic = '  Техническая\tтема\n исследования  '
-        result = self.run_cli('--topic', topic)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout), {
+        out, err = StringIO(), StringIO()
+        with patch('research_assistant.graph.generate_research_plan', return_value=valid_plan()):
+            with redirect_stdout(out), redirect_stderr(err):
+                code = main(['--topic', topic])
+        self.assertEqual(code, 0, err.getvalue())
+        self.assertEqual(json.loads(out.getvalue()), {
             'topic': topic, 'normalized_topic': 'Техническая тема исследования',
-            'status': 'ready',
+            'status': 'planned', 'plan': valid_plan(),
         })
-        self.assertIn('Техническая', result.stdout)
-        self.assertEqual(result.stderr, '')
+        self.assertIn('Техническая', out.getvalue())
+        self.assertEqual(err.getvalue(), '')
 
     def test_empty_topic(self):
         for topic in ('', '  \t\n '):
@@ -40,7 +49,7 @@ class CliTests(unittest.TestCase):
 class GraphTests(unittest.TestCase):
     def test_graph(self):
         from research_assistant.graph import build_graph
-        graph = build_graph()
+        graph = build_graph(lambda topic: valid_plan())
         for topic, normalized in (
             ('LangGraph', 'LangGraph'),
             ('  Тема\t исследования\nPython  ', 'Тема исследования Python'),
@@ -49,7 +58,8 @@ class GraphTests(unittest.TestCase):
             with self.subTest(topic=topic):
                 state = {'topic': topic}
                 self.assertEqual(graph.invoke(state), {
-                    'topic': topic, 'normalized_topic': normalized, 'status': 'ready',
+                    'topic': topic, 'normalized_topic': normalized,
+                    'status': 'planned', 'plan': valid_plan(),
                 })
                 self.assertEqual(state, {'topic': topic})
 

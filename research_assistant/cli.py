@@ -5,6 +5,7 @@ import json
 import sys
 
 from research_assistant.graph import EmptyTopicError, build_graph
+from research_assistant.planning import ConfigurationError, PlanGenerationError
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -13,13 +14,13 @@ def main(argv: list[str] | None = None) -> int:
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8")
 
-    parser = argparse.ArgumentParser(description="Подготовка заявки на исследование")
+    parser = argparse.ArgumentParser(description="Составление плана исследования")
     parser.add_argument("--topic", required=True, help="Тема исследования")
     args = parser.parse_args(argv)
     graph = build_graph()
     try:
         result = graph.invoke({"topic": args.topic})
-    except EmptyTopicError as error:
+    except (EmptyTopicError, ConfigurationError, PlanGenerationError) as error:
         print(f"Ошибка: {error}", file=sys.stderr)
         return 2
     print(json.dumps(result, ensure_ascii=False, indent=2))

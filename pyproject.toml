@@ -5,9 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "technical-research-assistant"
 version = "0.1.0"
-description = "Prepare technical research requests with LangGraph"
+description = "Plan technical research with LangGraph and Polza AI"
 requires-python = ">=3.11"
-dependencies = ["langgraph>=1.0,<2.0"]
+dependencies = [
+    "langgraph>=1.0,<2.0",
+    "langchain-openai>=1.0,<2.0",
+    "pydantic>=2.7,<3.0",
+    "python-dotenv>=1.0,<2.0",
+]
 
 [project.scripts]
 research-assistant = "research_assistant.cli:main"
