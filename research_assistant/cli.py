@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from research_assistant.graph import EmptyTopicError, build_graph
 from research_assistant.planning import ConfigurationError, PlanGenerationError
 from research_assistant.schemas import ResearchPlan
+from research_assistant.search import SearchError
 
 
 def show_plan(plan: dict) -> None:
@@ -77,13 +78,17 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Составление плана исследования")
     parser.add_argument("--topic", required=True, help="Тема исследования")
     parser.add_argument("--review", action="store_true", help="Проверить и утвердить план интерактивно")
+    parser.add_argument("--search", action="store_true", help="Найти источники после утверждения плана")
     args = parser.parse_args(argv)
+    if args.search and not args.review:
+        print("Ошибка: --search требует --review и утверждение плана.", file=sys.stderr)
+        return 2
     if args.review and (sys.stdin is None or not sys.stdin.isatty()):
         print("Ошибка: --review требует интерактивный терминал для ввода решения.", file=sys.stderr)
         return 2
     if args.review:
         checkpointer = InMemorySaver()
-        graph = build_graph(review=True, checkpointer=checkpointer)
+        graph = build_graph(review=True, search=args.search, checkpointer=checkpointer)
         config = {"configurable": {"thread_id": uuid4().hex}}
     else:
         graph = build_graph()
@@ -94,7 +99,7 @@ def main(argv: list[str] | None = None) -> int:
             payload = result["__interrupt__"][0].value
             decision = request_review(payload["plan"])
             result = graph.invoke(Command(resume=decision), config)
-    except (EmptyTopicError, ConfigurationError, PlanGenerationError) as error:
+    except (EmptyTopicError, ConfigurationError, PlanGenerationError, SearchError) as error:
         print(f"Ошибка: {error}", file=sys.stderr)
         return 2
     print(json.dumps(result, ensure_ascii=False, indent=2))
