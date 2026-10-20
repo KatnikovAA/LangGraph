@@ -15,6 +15,9 @@ from tavily.errors import (
 
 from research_assistant.schemas import Source
 
+MAX_SEARCH_RESULTS = 1
+MAX_SNIPPET_CHARS = 500
+
 
 class SearchError(Exception):
     """Expected configuration, request or response error during search."""
@@ -59,7 +62,7 @@ def search_web(query: str) -> list[dict[str, Any]]:
             session.hooks["response"].append(_validate_response)
             client = TavilyClient(api_key=api_key, session=session)
             payload = client.search(
-                query=query, search_depth="basic", max_results=3,
+                query=query, search_depth="basic", max_results=MAX_SEARCH_RESULTS,
                 include_answer=False, include_raw_content=False,
                 auto_parameters=False, timeout=30,
             )
@@ -92,5 +95,6 @@ def search_web(query: str) -> list[dict[str, Any]]:
             })
         except ValidationError as error:
             raise SearchError("Источник Tavily не прошёл проверку title, HTTP(S) URL или snippet.") from error
+        source.snippet = source.snippet[:MAX_SNIPPET_CHARS]
         sources.append(source.model_dump(mode="json", exclude={"section_indexes"}))
     return sources

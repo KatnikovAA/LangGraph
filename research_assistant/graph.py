@@ -1,9 +1,11 @@
 """Research request state and graph, independent of the CLI."""
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, Literal, NotRequired, TypedDict
 
 from langgraph.graph import END, START, StateGraph
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.types import interrupt
 from pydantic import ValidationError
@@ -11,17 +13,21 @@ from pydantic import ValidationError
 from research_assistant.planning import PlanGenerationError, generate_research_plan
 from research_assistant.schemas import EditDecision, ResearchPlan, Source, review_decision_adapter
 from research_assistant.search import SearchError, search_web, validate_search_query
+from research_assistant.reporting import generate_report_draft, render_report, write_report
 
 
 class TopicInput(TypedDict):
     topic: str
+    workflow: NotRequired[dict[str, Any]]
 
 
 class RequestState(TopicInput):
     normalized_topic: NotRequired[str]
-    status: NotRequired[Literal["ready", "planned", "approved", "cancelled", "sources_found", "no_sources"]]
+    status: NotRequired[Literal["ready", "planned", "approved", "cancelled", "sources_found", "no_sources", "report_ready", "completed"]]
     plan: NotRequired[dict[str, Any]]
     sources: NotRequired[list[dict[str, Any]]]
+    report_markdown: NotRequired[str]
+    report_path: NotRequired[str]
 
 
 class EmptyTopicError(ValueError):
@@ -96,10 +102,15 @@ def build_graph(
     plan_generator: Callable[[str], ResearchPlan | dict] | None = None,
     *, review: bool = False, checkpointer: BaseCheckpointSaver | None = None,
     search: bool = False, search_function: Callable[[str], list[dict[str, Any]]] | None = None,
+    report: bool = False, output_dir: str | None = None,
+    report_generator: Callable | None = None,
 ):
-    """Build a compiled graph accepting only the original topic as input."""
+    """Compile the selected workflow; persistent callers also supply workflow settings."""
     if search and not review:
         raise ValueError("Режим search требует review и утверждение плана.")
+    if report and not (review and search):
+        raise ValueError("Режим report требует review и search.")
+    resolved_output = str(Path(output_dir or 'reports').resolve())
     if review and checkpointer is None:
         raise ValueError("Режим review требует checkpointer для паузы и продолжения.")
     builder = StateGraph(RequestState, input_schema=TopicInput)
@@ -129,7 +140,31 @@ def build_graph(
             builder.add_node("search_sources", run_search)
             builder.add_conditional_edges("review_plan", route_after_review,
                                           {"search_sources": "search_sources", END: END})
-            builder.add_edge("search_sources", END)
+            if report:
+                def generate_report(state: RequestState) -> dict[str, Any]:
+                    sources = state['sources']
+                    data = [{'id': f'S{i}', 'title': item['title'], 'snippet': item['snippet']}
+                            for i, item in enumerate(sources, 1)]
+                    generator = report_generator if report_generator is not None else generate_report_draft
+                    draft = generator(state['normalized_topic'], state['plan'], data)
+                    return {'report_markdown': render_report(draft, sources), 'status': 'report_ready'}
+
+                def save_report(state: RequestState, config: RunnableConfig) -> dict[str, Any]:
+                    path = write_report(state['report_markdown'], resolved_output,
+                                        config['configurable']['thread_id'])
+                    return {'report_path': path, 'status': 'completed'}
+
+                def route_after_search(state: RequestState) -> str:
+                    return 'generate_report' if state['status'] == 'sources_found' else END
+
+                builder.add_node('generate_report', generate_report)
+                builder.add_node('save_report', save_report)
+                builder.add_conditional_edges('search_sources', route_after_search,
+                                              {'generate_report': 'generate_report', END: END})
+                builder.add_edge('generate_report', 'save_report')
+                builder.add_edge('save_report', END)
+            else:
+                builder.add_edge("search_sources", END)
         else:
             builder.add_edge("review_plan", END)
     else:

@@ -41,6 +41,7 @@ class ProviderTests(unittest.TestCase):
             self.assertNotIn('max_completion_tokens', body)
             self.assertNotIn('max_tokens', body)
             self.assertEqual(body['messages'][-1]['content'], 'Архитектура Python')
+            self.assertIn('ровно 1 раздел с ровно 1 вопросом', body['messages'][0]['content'])
             self.assertEqual(body['response_format']['type'], 'json_schema')
             return self.response(json.dumps(valid_plan(), ensure_ascii=False))
 

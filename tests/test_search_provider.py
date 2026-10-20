@@ -52,7 +52,7 @@ class SearchProviderTests(unittest.TestCase):
             self.assertEqual(request.url, 'https://api.tavily.com/search')
             body = json.loads(request.body)
             self.assertEqual(body, {
-                'query': 'Память агентов', 'search_depth': 'basic', 'max_results': 3,
+                'query': 'Память агентов', 'search_depth': 'basic', 'max_results': 1,
                 'include_answer': False, 'include_raw_content': False, 'auto_parameters': False,
             })
             self.assertEqual(kwargs['timeout'], 30)
@@ -70,6 +70,16 @@ class SearchProviderTests(unittest.TestCase):
     def test_empty_results(self):
         result, _ = self.invoke_local(lambda *_: (200, '{"results": []}'))
         self.assertEqual(result, [])
+
+    def test_snippet_length_boundary_preserves_source_metadata(self):
+        for size in (0, 499, 500, 501, 2000):
+            with self.subTest(size=size):
+                content = 'Я' * size
+                result, _ = self.invoke_local(lambda *_: (200, json.dumps({'results': [
+                    {'title': 'Источник', 'url': 'https://example.org', 'content': content}
+                ]})))
+                self.assertEqual(result, [{'title': 'Источник', 'url': 'https://example.org',
+                                           'snippet': content[:500]}])
 
     def test_malformed_response_is_not_empty_success(self):
         invalid = ['not json', '{}', 'null', '[]', '{"results": null}', '{"results": {}}']

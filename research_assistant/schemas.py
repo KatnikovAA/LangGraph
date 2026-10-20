@@ -37,6 +37,19 @@ class Source(BaseModel):
         return value
 
 
+class ReportSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: NonEmptyText
+    text: NonEmptyText
+    source_ids: list[NonEmptyText]
+
+
+class ReportDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: NonEmptyText
+    sections: list[ReportSection] = Field(min_length=1)
+
+
 class ApproveDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action: Literal["approve"]
