@@ -1,4 +1,4 @@
-"""Sequential search adapter using the official Tavily SDK."""
+"""One-query search adapter with a separate Tavily client/session per call."""
 
 import os
 from pathlib import Path

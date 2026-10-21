@@ -6,7 +6,7 @@ from pathlib import Path
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 
-WORKFLOW_VERSION = 1
+WORKFLOW_VERSION = 2
 WORKFLOW_MODE = 'review_search_report'
 
 
@@ -42,7 +42,7 @@ def inspect_thread(graph, config: dict, db: str):
         raise PersistenceError('Thread не найден в указанной базе Checkpoints.')
     settings = snapshot.values.get('workflow')
     if not isinstance(settings, dict) or settings.get('version') != WORKFLOW_VERSION or settings.get('mode') != WORKFLOW_MODE:
-        raise PersistenceError('Несовместимая версия или режим сохранённого Workflow.')
+        raise PersistenceError('Несовместимая версия или режим сохранённого Workflow. Текущая версия — 2; создайте новый Thread. Старая БД сохранена.')
     if (settings.get('thread_id') != config['configurable']['thread_id']
             or settings.get('checkpoint_db') != str(Path(db).resolve())
             or not isinstance(settings.get('output_dir'), str)

@@ -8,6 +8,23 @@ Python-приложение принимает техническую тему, 
 
 ## Текущее состояние
 
+### Этап 7 — Parallelization + Reducers + Map-Reduce
+
+Статус: завершён; автономно проверен. Утверждённый Plan → prepare_search (проверка всех запросов)
+→ Send по одному search_section на раздел → collect_sources → Report либо END.
+Worker Input содержит section_index/query; каждый Worker возвращает одну batch.
+search_batches объединяются через Annotated[list[SearchBatch], operator.add].
+Fan-in проверяет полноту и уникальность batches, сортирует по section_index,
+дедуплицирует точные URL с прежним порядком и section_indexes. Пустой Plan
+идёт прямо в collect_sources. Cancel не запускает поиск. Один поиск на Thread,
+сброс add-Reducer через [] не используется. CLI max_concurrency=2 на верхнем
+уровне RunnableConfig. Workflow версии 2 несовместим с прежними Checkpoints;
+БД не удаляется. Resume использует Pending Writes успешных Tasks, failed Task
+может повториться; exactly-once не гарантируется. API без разрешения не вызываются.
+Компактность и прежние режимы/Report/Persistence сохраняются. Новых пакетов нет.
+Academy: State Reducers (2), Parallelization и Map-reduce (4), практика пользователя
+ещё не подтверждена. Subgraphs, Agent, Streaming и Long-Term Memory не закрываются.
+
 ### Этапы 5 + 6 — Report Generation + Persistence
 
 Статус: завершён; автономно проверен. Реализация в двух блоках: A — ReportDraft, проверка ID
@@ -23,7 +40,8 @@ Checkpoints синхронные. report_ready предшествует запи
 сохраняются; ручные планы не ограничены числом разделов.
 Проверки автономные, включая два subprocess и ошибку записи с восстановлением.
 API без отдельного разрешения не вызываются. Exactly-once не гарантируется:
-незавершённый Node и запросы внутри search_sources могут повториться.
+в версии 1 незавершённый Node search_sources мог повторить весь цикл запросов.
+В версии 2 поиск разделён на Tasks, успешные Pending Writes используются при Resume.
 Academy: Research Assistant, Persistence / External Memory, Human-in-the-Loop;
 предпосылки — State, Nodes, Conditional Edges, interrupt. Наличие реализации
 не подтверждает изучение; Store, Long-Term Memory, Time Travel, Parallelization,
@@ -47,7 +65,8 @@ max_results=1; snippet обрезается локально до 500 симво
   на каждый раздел; сохраняемый snippet обрезается до 500 символов после проверки.
   Прежние требования о 3 разделах/80 словах и max_results=3 ниже заменены этим уточнением.
 
-- Последний выполненный этап: 5 + 6 — Report Generation + Persistence.
+- Последний выполненный этап: 7 — Parallelization + Reducers + Map-Reduce.
+- Статус этапа 7: завершён; автономные проверки пройдены, реальные API не вызывались.
 - Статус этапов 5 + 6: завершены; 68 автономных тестов, без реальных API-запросов.
 - Статус этапа 4: завершён; 52 автономных теста прошли, реальное подключение Tavily не проверялось.
 - Статус этапа 3: завершён; 32 автономных теста прошли, реальный API не вызывался.
@@ -77,9 +96,9 @@ Studio рассматривается концептуально; установ
 | --- | --- |
 | 0. Подготовка | Окружение и ресурсы — использованы в реализации; обзор настройки с пользователем ещё закрепить |
 | 1. Introduction | Motivation — частично; Simple Graph — разобран; Studio — кратко обсуждён, обзор впереди; Chain — реализована последовательность, термин и паттерн закрепить; Router — реализован через Conditional Edges и автономно проверен в этапе 4, практика пользователя ещё не подтверждена; Agent — впереди; Agent with Memory — впереди; optional Intro to Deployment — впереди |
-| 2. State and Memory | State Schema — базовый разбор TypedDict/Pydantic, углубление впереди; State Reducers — обзор, практика впереди; Multiple Schemas — обзор и input_schema в коде, разбор впереди; Trim and Filter Messages — впереди; Summarizing Messages and Memory — впереди; Summarizing Messages and External Memory — впереди |
+| 2. State and Memory | State Schema — базовый разбор TypedDict/Pydantic, углубление впереди; State Reducers — operator.add реализован и автономно проверен в этапе 7, практика пользователя ещё не подтверждена; Multiple Schemas — обзор и input_schema в коде, разбор впереди; Trim and Filter Messages — впереди; Summarizing Messages and Memory — впереди; Summarizing Messages and External Memory — впереди |
 | 3. UX and Human-in-the-Loop | Streaming — впереди; Breakpoints — впереди; Editing State and Human Feedback — реализованы и проверены автономно в этапе 3, практика пользователя ещё не подтверждена; Dynamic Breakpoints — interrupt реализован и проверен, в этапах 5 + 6 добавлен Resume из файлового Checkpoint между процессами; понимание и практика пользователя ещё не подтверждены; Time Travel — впереди |
-| 4. Building Your Assistant | Parallelization — обзор, практика впереди; Sub-graphs — впереди; Map-reduce — впереди; Research Assistant — Plan, Review, последовательный Web Search, Markdown Report и SQLite Persistence интегрированы и автономно проверены в этапах 5 + 6; практика пользователя ещё не подтверждена |
+| 4. Building Your Assistant | Parallelization и Map-reduce — Send Workers/Fan-in реализованы и автономно проверены в этапе 7, практика пользователя ещё не подтверждена; Sub-graphs — впереди; Research Assistant — Plan, Review, последовательный Web Search, Markdown Report и SQLite Persistence интегрированы и автономно проверены в этапах 5 + 6; практика пользователя ещё не подтверждена |
 | 5. Long-Term Memory | Short vs. Long-Term Memory — впереди; LangGraph Store — впереди; Memory Schema + Profile — впереди; Memory Schema + Collection — впереди; Agent with Long-Term Memory — впереди |
 | 6. Deployment | Deployment Concepts — впереди; Creating a Deployment — впереди; Connecting to a Deployment — впереди; Double Texting — впереди; Assistants — впереди |
 
@@ -336,6 +355,34 @@ Persistence / External Memory здесь означает файловые Check
 и Human-in-the-Loop (модули 1–3). Markdown-файл — формат результата приложения;
 файловый Checkpointer не заменяет темы Store / Long-Term Memory / Deployment.
 
+## Этап 7 — Parallelization, Reducers и Map-Reduce
+
+Статус: завершён; автономно проверен.
+Academy: State Reducers (модуль 2), Parallelization и Map-reduce (модуль 4).
+Предпосылки: State, Conditional Edges, Human-in-the-Loop, Checkpointer.
+
+- Заменить цикл поиска в одном Node на prepare_search → Send(search_section)
+  по разделам → collect_sources. Workers используют один зарегистрированный Node
+  с отдельными входными данными, а не дополнительные LLM Agents.
+- prepare_search валидирует все запросы до первого Search API; cancelled не ищет.
+- Общий search_batches использует Annotated[list, operator.add]; каждый Worker
+  возвращает одну batch с section_index и результатами, не status/plan/sources.
+- collect_sources ожидает все Workers, сортирует batches по section_index,
+  проверяет полноту, дедуплицирует URL и формирует прежний sources/status.
+- Пустой Plan направляется в collect_sources без Send и API, даёт no_sources.
+- Сохранить компактность: Plan 1 раздел/1 вопрос через промпт, max_results=1,
+  snippet<=500, без новых реальных API-вызовов для демонстрации нескольких веток.
+- Ограничить max_concurrency, например 2, на верхнем уровне RunnableConfig.
+- Preserve Report/Persistence и прежние режимы. Схему Graph/State меняем:
+  пересмотреть WORKFLOW_VERSION, явно отклонять несовместимые старые Threads,
+  не удаляя прежнюю БД. Зафиксировать это в README до проверки Resume.
+- Проверить Workers с разным порядком завершения, Fan-in один раз, одновременное
+  выполнение без ненадёжных time-based assertions, pending writes и Resume
+  из новой SQLite-сессии после сбоя одного Worker; успешные Tasks не повторяются.
+- Не заявлять exactly-once: незавершённый Worker может повторить API-вызов.
+- Subgraphs, Agent/Tool Calling, Messages/Memory, Streaming и Time Travel
+  остаются самостоятельными темами карты покрытия.
+
 ## Дальнейшие этапы — предварительный маршрут
 
 Эти пункты обозначают направление развития, а не утверждённые задания на реализацию.
@@ -348,13 +395,52 @@ Persistence / External Memory здесь означает файловые Check
 | 4 | Поиск источников по плану | Завершён; автономно проверен |
 | 5 | Формирование Markdown-отчёта с источниками | Завершён; автономно проверен |
 | 6 | Сохранение и продолжение выполнения после перезапуска | Завершён; автономно проверен |
-| 7 | Параллельная обработка подтем и объединение результатов | Предварительный |
+| 7 | Параллельный поиск по разделам и объединение результатов | Завершён; автономно проверен |
 
-Reducers, управление сообщениями, streaming, подграфы, долговременная память
+Углубление Reducers, управление сообщениями, streaming, подграфы, долговременная память
 и развёртывание будут включаться по мере необходимости в отдельных уточнённых этапах.
 Этот маршрут не является полным перечнем тем LangGraph.
 
 ## Журнал выполнения
+
+### 2026-10-20 — этап 7, Parallelization + Reducers + Map-Reduce
+
+- Сверены AGENTS.md, spec.md, фактические исходники/тесты и Git. До работы
+  изменён только spec.md с подготовленным заданием этапа 7; эти изменения сохранены.
+  Report, атомарная запись, файловый SqliteSaver, Pause и Resume сохранены.
+- Context7: resolve-library-id LangGraph, отдельные query-docs для Send,
+  Annotated/Reducer, Fan-in, max_concurrency и Pending Writes/Resume.
+  Установлены LangGraph 1.2.16 и langgraph-checkpoint-sqlite 3.1.2.
+- graph.py: SearchWorkerInput, SearchBatch и SearchState с operator.add;
+  prepare_search проверяет все запросы до API; dispatch_search создаёт Send,
+  пустой Plan направляет в collect_sources; search_section выполняет один вызов
+  и возвращает одну batch без общего status. collect_sources проверяет полноту,
+  сортирует batches и сохраняет прежнюю дедупликацию/порядок Sources.
+  Fan-in выполняется после Worker super-step. Report не получает частичные Sources.
+- MAX_CONCURRENCY=2 в верхнем RunnableConfig CLI для начала/Resume и default
+  config собранного Graph. Поисковый клиент/Session создаются отдельно на вызов.
+  Новые устанавливаемые зависимости не добавлены, промпт/лимиты поиска не изменены.
+- WORKFLOW_VERSION=2: Threads версии 1 отклоняются до API, БД не удаляется.
+  Автоматической миграции и RetryPolicy нет. Успешные Pending Writes переживают
+  закрытие SQLite и новый saver/Graph; failed Task может повторить API-вызов.
+- Добавлены test_parallel_search.py и адаптация прежних test_search.py:
+  данные привязаны к query, а не порядку вызова параллельных Workers.
+  Первые проверки выявили отсутствие новых Nodes/config и Task-level recovery.
+  После реализации полный unittest discover: 74 теста, OK, 14.928 с.
+  Проверены один/несколько/ноль разделов, cancel, проверка запросов до API,
+  перекрытие через Event с ожиданиями максимум 5 с, лимит 2, порядок Sources,
+  дубли URL, Fan-in/Report один раз, контракты без мутаций, ошибки ветки,
+  отсутствие Report, новая SQLite-сессия и отсутствие повторов успешной Task,
+  отсутствие повторных batches, версия 1 без API/удаления БД, прежние CLI/Report
+  и Pause/Resume в настоящих subprocess. Нет сравнений длительности Workers.
+- compileall и pip check прошли с кодом 0; git diff --check — код 0
+  (только уведомления Git о LF/CRLF). Реальные .env, БД и отчёты не изменялись.
+- README обновлён: схема Fan-out/Fan-in, Send, Worker Input, Reducer, default
+  один Worker, concurrency config, восстановление и несовместимость версии 1.
+- Реальные API не вызывались. Exactly-once не гарантируется. Новые функции
+  покрыты автономно; практика пользователя по Reducers/Parallelization/Map-reduce
+  ещё не подтверждена. Subgraphs, Agent, Streaming и Long-Term Memory не закрыты.
+  Коммит и push не выполнялись.
 
 ### 2026-10-20 — завершение этапов 5 + 6
 
@@ -659,3 +745,11 @@ Reducers, управление сообщениями, streaming, подграф
   compileall, git diff --check и pip check — код 0.
 - Реальные API не вызывались. .env, каталог Checkpoints и отчёты исключены из Git.
 - Публикуются Report Generation, SQLite Persistence, тесты и документация.
+
+### 2026-10-21 — публикация этапа 7
+
+- Пользователь разрешил коммит текущих изменений и push в origin/main.
+- Перед публикацией: unittest discover -s tests -v — 74 теста, 17.154 с, OK;
+  compileall и git diff --check — код 0. Реальные API не вызывались.
+- Публикуются Parallelization, Reducer, Map-Reduce и Workflow версии 2, тесты и документация.
+- .env, локальные Checkpoints и отчёты исключены из Git.

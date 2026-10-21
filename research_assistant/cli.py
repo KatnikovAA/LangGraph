@@ -10,7 +10,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 from pydantic import ValidationError
 
-from research_assistant.graph import EmptyTopicError, build_graph
+from research_assistant.graph import EmptyTopicError, MAX_CONCURRENCY, build_graph
 from research_assistant.planning import ConfigurationError, PlanGenerationError
 from research_assistant.schemas import ResearchPlan
 from research_assistant.search import SearchError
@@ -79,7 +79,7 @@ def require_terminal() -> None:
 def persistent_run(args) -> dict:
     db = str(Path(args.checkpoint_db or '.research_assistant/checkpoints.sqlite').resolve())
     thread_id = args.resume or uuid4().hex
-    config = {'configurable': {'thread_id': thread_id}}
+    config = {'configurable': {'thread_id': thread_id}, 'max_concurrency': MAX_CONCURRENCY}
     print(f'Thread: {thread_id}\nCheckpoints: {db}', file=sys.stderr, flush=True)
     with open_saver(db, existing=bool(args.resume)) as saver:
         if args.resume:
@@ -156,7 +156,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.review:
             graph = build_graph(review=True, search=args.search, checkpointer=InMemorySaver())
-            config = {"configurable": {"thread_id": uuid4().hex}}
+            config = {"configurable": {"thread_id": uuid4().hex}, 'max_concurrency': MAX_CONCURRENCY}
         else:
             graph = build_graph()
             config = None

@@ -244,7 +244,7 @@ notepad .env
 
 ```text
 START → validate_topic → prepare_request → generate_plan → review_plan
-                                                           ├─ approved → search_sources → END
+                                                           ├─ approved → prepare_search → Workers → collect_sources → END
                                                            └─ cancelled → END
 ```
 
@@ -255,7 +255,7 @@ START → validate_topic → prepare_request → generate_plan → review_plan
 
 Для каждого раздела окончательного плана формируется один запрос:
 `normalized_topic + title раздела + все questions`, соединённые пробелами.
-Запросы выполняются последовательно, без нового LLM-вызова. Tavily вызывается
+Запросы выполняются отдельными LangGraph Tasks с max_concurrency=2, без нового LLM-вызова. Tavily вызывается
 с `search_depth="basic"`, `max_results=1`, `include_answer=False`,
 `include_raw_content=False`, `auto_parameters=False`, таймаутом 30 секунд.
 Автоматических повторов нет; объём поиска равен числу утверждённых разделов.
@@ -319,7 +319,7 @@ Set-Location 'F:\AI Agent\LangGraph'
 ```
 
 Сначала выполняются прежние Nodes validate_topic → prepare_request → generate_plan
-→ review_plan. После approve/edit: search_sources → при sources_found
+→ review_plan. После approve/edit: prepare_search → search_section Workers → collect_sources → при sources_found
 generate_report → save_report → END. Cancelled и no_sources завершаются без
 дополнительного обращения к Report-модели и без Markdown-файла.
 
@@ -395,8 +395,9 @@ thread_id. Если после завершения удалить Markdown вр
 
 **Resume может расходовать баланс.** Сохранённые завершённые Nodes не повторяются,
 но Node, остановленный до фиксации результата, может выполниться заново. Exactly-once
-внешних запросов не гарантируется. В search_sources запросы находятся в одном цикле:
-при сбое ранее выполненные запросы этого Node могут повториться. При ошибке записи
+внешних запросов не гарантируется. Каждый search_section выполняет один запрос:
+при сбое failed Task может повторить его. Успешные Tasks с сохранёнными Pending Writes
+при Resume не повторяются. При ошибке записи
 после сохранения report_ready Resume использует сохранённый report_markdown и повторяет
 только save_report. Настройки модели при повторном API-вызове читаются из текущего `.env`.
 
@@ -407,6 +408,72 @@ thread_id. Если после завершения удалить Markdown вр
 параметры и совместимость Thread) → `cli.py` (флаги, меню, запуск и Resume).
 Общая `planning.create_model()` задаёт одинаковые настройки модели Plan и Report.
 В тестах генераторы Plan, Search и Report заменяются независимо.
+
+## Parallelization, Reducers и Map-Reduce
+
+Поиск разделён на подготовку заданий, динамический Fan-out и общий Fan-in:
+
+```text
+review_plan
+  cancelled → END
+  approved → prepare_search
+               ├─ Send(search_section, job 0) ─┐
+               ├─ Send(search_section, job 1) ─┤
+               └─ Send(search_section, job N) ─┴→ collect_sources
+                                                   ├─ no_sources → END
+                                                   └─ sources_found → Report / END
+```
+
+Пустой Plan идёт из prepare_search прямо в collect_sources. Все строки запросов
+проверяются **до** первого Search API. Worker Input (`SearchWorkerInput`) содержит
+только section_index и query; `Send` создаёт Task зарегистрированного search_section
+со своим входом. Модель для распределения заданий не вызывается.
+
+Worker делает один вызов поиска, проверяет результат и возвращает только одну
+batch в search_batches. Ни status, ни окончательные sources он не меняет.
+Общий `SearchState` расширяет прежний RequestState только в поисковых режимах:
+
+```python
+search_batches: Annotated[list[SearchBatch], operator.add]
+```
+
+Без Reducer несколько Workers записывали бы один обычный State key в одном
+super-step, что LangGraph отклоняет как конфликт параллельных обновлений.
+`operator.add` конкатенирует списки batches. Возврат `[]` не очищает такой список;
+один Thread проходит один поисковый этап, повторный цикл здесь не реализован.
+
+Fan-in — ребро `search_section → collect_sources`: сбор начинается после окончания
+всего Worker super-step. collect_sources проверяет по одной batch на раздел,
+сортирует по section_index, сохраняет порядок внутри batches и объединяет точные
+URL. Название/snippet берутся из первого результата в порядке разделов, независимо
+от порядка завершения Tasks. Report запускается один раз после полного сбора.
+
+Лимит задаётся верхним полем RunnableConfig: `{"max_concurrency": 2,
+"configurable": {"thread_id": "..."}}`. Он установлен в CLI для начала и Resume,
+а также как default config собранного Graph. В Python его можно переопределить
+в config. Общего изменяемого клиента Tavily нет: search_web создаёт собственные
+Session и клиент на каждый вызов. Подменный search_function должен быть пригоден
+для одновременных вызовов. План по умолчанию всё ещё содержит один раздел:
+это один Worker; несколько Workers появляются при утверждении нескольких разделов.
+
+### Ошибка ветки и совместимость Checkpoints
+
+Ошибка Worker остаётся ошибкой CLI (stderr, код 2, без успешного JSON и Report).
+Автоматический RetryPolicy не добавлен. Успешные Task results сохраняются как
+Pending Writes; при явном `--resume` через новый saver/Graph они используются
+повторно, а failed Task запускается заново. Fan-in не получает двойные batches.
+API-вызов failed Task может расходовать баланс повторно; exactly-once нет.
+
+**WORKFLOW_VERSION теперь 2.** Структура Nodes/State изменилась. Threads версии 1,
+включая сохранённые ранее Pause, отклоняются до любых API-вызовов; автоматической
+миграции нет. Старая БД и файлы не удаляются. Для нового Workflow создайте новый
+Thread обычной командой с `--topic`; версия 2 может использовать тот же SQLite-файл.
+
+Порядок чтения поиска: `SearchWorkerInput`/`SearchBatch`/`SearchState` →
+`prepare_search` → `dispatch_search` → `search_section` → `collect_sources` →
+`build_graph` в graph.py, затем config в cli.py и совместимость в persistence.py.
+Новых устанавливаемых зависимостей нет: Send — из LangGraph, Annotated — из typing,
+operator.add — из стандартной библиотеки Python.
 
 ## Проверки
 
@@ -437,3 +504,11 @@ References, неизвестные ID, UTF-8, атомарная замена, �
 subprocess: Pause → новый процесс Resume → ещё один процесс завершённого Resume.
 Plan во втором процессе запрещён тестом; все сервисы подменены. HTTP-запрос Report
 проверяется настоящим ChatOpenAI через локальный MockTransport, без сети и оплаты.
+
+`test_parallel_search.py` дополнительно проверяет реальное перекрытие Workers
+через Event с ограниченными ожиданиями, лимит 2, разный порядок завершения,
+Fan-in/Report один раз, полноту batches и Worker partial updates без мутаций.
+После сбоя ветки закрывается SQLite-соединение и создаётся новый saver/Graph:
+успешная Task не повторяется, failed повторяется, дубликатов нет. Старые Threads
+версии 1 проверяются на отказ CLI без API и удаления базы. Проверки многосекционных
+планов используют искусственный Plan, а не меняют компактный System Prompt.

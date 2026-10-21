@@ -1,13 +1,14 @@
 """Research request state and graph, independent of the CLI."""
 
+import operator
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Literal, NotRequired, TypedDict
+from typing import Annotated, Any, Literal, NotRequired, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from langgraph.types import interrupt
+from langgraph.types import Send, interrupt
 from pydantic import ValidationError
 
 from research_assistant.planning import PlanGenerationError, generate_research_plan
@@ -28,6 +29,24 @@ class RequestState(TopicInput):
     sources: NotRequired[list[dict[str, Any]]]
     report_markdown: NotRequired[str]
     report_path: NotRequired[str]
+
+
+MAX_CONCURRENCY = 2
+
+
+class SearchWorkerInput(TypedDict):
+    section_index: int
+    query: str
+
+
+class SearchBatch(TypedDict):
+    section_index: int
+    results: list[dict[str, Any]]
+
+
+class SearchState(RequestState):
+    search_jobs: NotRequired[list[SearchWorkerInput]]
+    search_batches: Annotated[list[SearchBatch], operator.add]
 
 
 class EmptyTopicError(ValueError):
@@ -56,46 +75,72 @@ def review_plan(state: RequestState) -> dict[str, Any]:
     return {"status": "approved"}
 
 
-def route_after_review(state: RequestState) -> Literal["search_sources", "__end__"]:
+def route_after_review(state: RequestState) -> Literal["prepare_search", "__end__"]:
     if state["status"] == "approved":
-        return "search_sources"
+        return "prepare_search"
     if state["status"] == "cancelled":
         return END
     raise ValueError("Маршрутизация после review требует approved или cancelled.")
 
 
-def search_sources(
-    state: RequestState,
-    search_function: Callable[[str], list[dict[str, Any]]] | None = None,
-) -> dict[str, Any]:
+def prepare_search(state: SearchState) -> dict[str, list[SearchWorkerInput]]:
+    """Validate every query before dispatching any external request."""
     if state["status"] != "approved":
         raise ValueError("Поиск требует утверждённый план.")
     plan = ResearchPlan.model_validate(state["plan"])
-    queries = [" ".join([state["normalized_topic"], section.title, *section.questions])
-               for section in plan.sections]
-    # Preflight all queries before spending credits on the first section.
-    for query in queries:
-        validate_search_query(query)
+    jobs = [SearchWorkerInput(section_index=index,
+                              query=" ".join([state["normalized_topic"], section.title, *section.questions]))
+            for index, section in enumerate(plan.sections)]
+    for job in jobs:
+        validate_search_query(job['query'])
+    return {'search_jobs': jobs}
+
+
+def dispatch_search(state: SearchState) -> list[Send] | Literal['collect_sources']:
+    jobs = state['search_jobs']
+    return [Send('search_section', dict(job)) for job in jobs] if jobs else 'collect_sources'
+
+
+def search_section(
+    state: SearchWorkerInput,
+    search_function: Callable[[str], list[dict[str, Any]]] | None = None,
+) -> dict[str, list[SearchBatch]]:
+    """One task, one search call, one immutable partial state update."""
     searcher = search_function if search_function is not None else search_web
+    results = searcher(state['query'])
+    if not isinstance(results, list):
+        raise SearchError("Поиск вернул некорректные данные: ожидается список источников.")
+    validated = []
+    for item in results:
+        if not isinstance(item, dict):
+            raise SearchError("Поиск вернул некорректный источник: ожидается объект.")
+        try:
+            source = Source.model_validate({**item, 'section_indexes': [state['section_index']]})
+        except ValidationError as error:
+            raise SearchError("Источник не прошёл проверку title, HTTP(S) URL или snippet.") from error
+        validated.append(source.model_dump(mode='json'))
+    return {'search_batches': [SearchBatch(section_index=state['section_index'], results=validated)]}
+
+
+def collect_sources(state: SearchState) -> dict[str, Any]:
+    """Fan-in: completeness first, then deterministic order and exact URL merge."""
+    expected = [job['section_index'] for job in state['search_jobs']]
+    batches = state.get('search_batches', [])
+    indexes = [batch['section_index'] for batch in batches]
+    if (any(type(index) is not int for index in indexes)
+            or len(indexes) != len(expected) or sorted(indexes) != sorted(expected)):
+        raise SearchError('Получен неполный или повторяющийся набор результатов поиска по разделам.')
     sources: dict[str, dict[str, Any]] = {}
-    for index, query in enumerate(queries):
-        results = searcher(query)
-        if not isinstance(results, list):
-            raise SearchError("Поиск вернул некорректные данные: ожидается список источников.")
-        for item in results:
-            if not isinstance(item, dict):
-                raise SearchError("Поиск вернул некорректный источник: ожидается объект.")
-            try:
-                source = Source.model_validate({**item, "section_indexes": [index]})
-            except ValidationError as error:
-                raise SearchError("Источник не прошёл проверку title, HTTP(S) URL или snippet.") from error
-            if source.url in sources:
-                indexes = sources[source.url]["section_indexes"]
+    for batch in sorted(batches, key=lambda item: item['section_index']):
+        index = batch['section_index']
+        for item in batch['results']:
+            if item['url'] in sources:
+                indexes = sources[item['url']]['section_indexes']
                 if index not in indexes:
                     indexes.append(index)
             else:
-                sources[source.url] = source.model_dump(mode="json")
-    return {"sources": list(sources.values()), "status": "sources_found" if sources else "no_sources"}
+                sources[item['url']] = {**item, 'section_indexes': [index]}
+    return {'sources': list(sources.values()), 'status': 'sources_found' if sources else 'no_sources'}
 
 
 def build_graph(
@@ -113,7 +158,7 @@ def build_graph(
     resolved_output = str(Path(output_dir or 'reports').resolve())
     if review and checkpointer is None:
         raise ValueError("Режим review требует checkpointer для паузы и продолжения.")
-    builder = StateGraph(RequestState, input_schema=TopicInput)
+    builder = StateGraph(SearchState if search else RequestState, input_schema=TopicInput)
     builder.add_node("validate_topic", validate_topic)
     builder.add_node("prepare_request", prepare_request)
 
@@ -134,12 +179,17 @@ def build_graph(
         builder.add_node("review_plan", review_plan)
         builder.add_edge("generate_plan", "review_plan")
         if search:
-            def run_search(state: RequestState) -> dict[str, Any]:
-                return search_sources(state, search_function)
+            def run_search(state: SearchWorkerInput) -> dict[str, Any]:
+                return search_section(state, search_function)
 
-            builder.add_node("search_sources", run_search)
-            builder.add_conditional_edges("review_plan", route_after_review,
-                                          {"search_sources": "search_sources", END: END})
+            builder.add_node('prepare_search', prepare_search)
+            builder.add_node('search_section', run_search, input_schema=SearchWorkerInput)
+            builder.add_node('collect_sources', collect_sources)
+            builder.add_conditional_edges('review_plan', route_after_review,
+                                          {'prepare_search': 'prepare_search', END: END})
+            builder.add_conditional_edges('prepare_search', dispatch_search,
+                                          ['search_section', 'collect_sources'])
+            builder.add_edge('search_section', 'collect_sources')
             if report:
                 def generate_report(state: RequestState) -> dict[str, Any]:
                     sources = state['sources']
@@ -159,14 +209,14 @@ def build_graph(
 
                 builder.add_node('generate_report', generate_report)
                 builder.add_node('save_report', save_report)
-                builder.add_conditional_edges('search_sources', route_after_search,
+                builder.add_conditional_edges('collect_sources', route_after_search,
                                               {'generate_report': 'generate_report', END: END})
                 builder.add_edge('generate_report', 'save_report')
                 builder.add_edge('save_report', END)
             else:
-                builder.add_edge("search_sources", END)
+                builder.add_edge("collect_sources", END)
         else:
             builder.add_edge("review_plan", END)
     else:
         builder.add_edge("generate_plan", END)
-    return builder.compile(checkpointer=checkpointer)
+    return builder.compile(checkpointer=checkpointer).with_config({'max_concurrency': MAX_CONCURRENCY})

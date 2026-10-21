@@ -36,13 +36,14 @@ class SearchGraphTests(unittest.TestCase):
         responses = [[shared, shared, hit('https://example.org/other')],
                      [hit(title='Позднее название')], [hit('https://example.org/other')]]
         original = copy.deepcopy(responses)
-        searcher = Mock(side_effect=responses)
+        queries = [' '.join(['Память агентов', s['title'], *s['questions']]) for s in valid_plan()['sections']]
+        searcher = Mock(side_effect=lambda query: responses[queries.index(query)])
         graph, config, generator = self.start(searcher)
         final = graph.invoke(Command(resume={'action': 'approve'}), config)
         self.assertEqual(final['status'], 'sources_found')
         self.assertEqual(final['topic'], '  Память\tагентов ')
         self.assertEqual(final['plan'], valid_plan())
-        self.assertEqual([c.args[0] for c in searcher.call_args_list], [
+        self.assertCountEqual([c.args[0] for c in searcher.call_args_list], [
             ' '.join(['Память агентов', s['title'], *s['questions']])
             for s in valid_plan()['sections']])
         self.assertEqual(final['sources'], [
@@ -92,14 +93,19 @@ class SearchGraphTests(unittest.TestCase):
 
     def test_search_failure_does_not_commit_partial_success(self):
         from research_assistant.search import SearchError
-        searcher = Mock(side_effect=[[hit()], SearchError('Ошибка поиска')])
+        def search(query):
+            if valid_plan()['sections'][1]['title'] in query:
+                raise SearchError('Ошибка поиска')
+            return [hit()]
+        searcher = Mock(side_effect=search)
         graph, config, generator = self.start(searcher)
         with self.assertRaises(SearchError):
             graph.invoke(Command(resume={'action': 'approve'}), config)
         snapshot = graph.get_state(config).values
         self.assertEqual(snapshot['status'], 'approved')
         self.assertNotIn('sources', snapshot)
-        self.assertEqual(searcher.call_count, 2)
+        self.assertGreaterEqual(searcher.call_count, 2)
+        self.assertLessEqual(searcher.call_count, 3)
         generator.assert_called_once()
 
     def test_invalid_hits_are_errors_and_urls_are_not_canonicalized(self):
@@ -117,11 +123,14 @@ class SearchGraphTests(unittest.TestCase):
         self.assertEqual(len(result['sources']), 2)
 
     def test_node_returns_partial_update_without_mutating_state(self):
-        from research_assistant.graph import search_sources
+        from research_assistant.graph import prepare_search, search_section, collect_sources
         state = {'topic': ' Тема ', 'normalized_topic': 'Тема',
                  'status': 'approved', 'plan': valid_plan()}
         original = copy.deepcopy(state)
-        result = search_sources(state, Mock(return_value=[hit()]))
+        prepared = prepare_search(state)
+        batches = [batch for job in prepared['search_jobs']
+                   for batch in search_section(job, Mock(return_value=[hit()]))['search_batches']]
+        result = collect_sources({**state, **prepared, 'search_batches': batches})
         self.assertEqual(set(result), {'sources', 'status'})
         self.assertEqual(state, original)
 
