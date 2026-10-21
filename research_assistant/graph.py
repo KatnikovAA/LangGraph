@@ -14,7 +14,7 @@ from pydantic import ValidationError
 from research_assistant.planning import PlanGenerationError, generate_research_plan
 from research_assistant.schemas import EditDecision, ResearchPlan, Source, review_decision_adapter
 from research_assistant.search import SearchError, search_web, validate_search_query
-from research_assistant.reporting import generate_report_draft, render_report, write_report
+from research_assistant.reporting import ReportError, generate_report_draft, render_report, write_report
 
 
 class TopicInput(TypedDict):
@@ -149,12 +149,15 @@ def build_graph(
     search: bool = False, search_function: Callable[[str], list[dict[str, Any]]] | None = None,
     report: bool = False, output_dir: str | None = None,
     report_generator: Callable | None = None,
+    break_before_search: bool = False,
 ):
     """Compile the selected workflow; persistent callers also supply workflow settings."""
     if search and not review:
         raise ValueError("Режим search требует review и утверждение плана.")
     if report and not (review and search):
         raise ValueError("Режим report требует review и search.")
+    if break_before_search and not (report and checkpointer is not None):
+        raise ValueError('Static Breakpoint требует полного Research Workflow и Checkpointer.')
     resolved_output = str(Path(output_dir or 'reports').resolve())
     if review and checkpointer is None:
         raise ValueError("Режим review требует checkpointer для паузы и продолжения.")
@@ -200,8 +203,11 @@ def build_graph(
                     return {'report_markdown': render_report(draft, sources), 'status': 'report_ready'}
 
                 def save_report(state: RequestState, config: RunnableConfig) -> dict[str, Any]:
+                    if state.get('workflow') and state['workflow'].get('output_dir') != resolved_output:
+                        raise ReportError('Каталог Report не совпадает с сохранёнными настройками Workflow.')
                     path = write_report(state['report_markdown'], resolved_output,
-                                        config['configurable']['thread_id'])
+                                        config['configurable']['thread_id'],
+                                        artifact_id=state.get('workflow', {}).get('artifact_id'))
                     return {'report_path': path, 'status': 'completed'}
 
                 def route_after_search(state: RequestState) -> str:
@@ -219,4 +225,6 @@ def build_graph(
             builder.add_edge("review_plan", END)
     else:
         builder.add_edge("generate_plan", END)
-    return builder.compile(checkpointer=checkpointer).with_config({'max_concurrency': MAX_CONCURRENCY})
+    return builder.compile(checkpointer=checkpointer,
+                           interrupt_before=['prepare_search'] if break_before_search else None
+                           ).with_config({'max_concurrency': MAX_CONCURRENCY})

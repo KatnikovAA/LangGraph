@@ -8,6 +8,25 @@ Python-приложение принимает техническую тему, 
 
 ## Текущее состояние
 
+### Этап 9 — Breakpoints, Editing State и Time Travel
+
+Статус: завершён; автономно проверен. Academy 3: Breakpoints, Editing State and Human Feedback,
+Dynamic Breakpoints, Time Travel. Предпосылки: Checkpoints, Thread ID, interrupt,
+Resume. History/Inspection только читают; статический interrupt_before перед
+prepare_search сохраняется в Workflow. Replay/Fork — native update_state от
+Checkpoint после generate_plan перед review_plan, без выполнения API при создании.
+Каждая альтернатива получает artifact_id и отдельный Report. Chat привязывается
+к завершённому Research checkpoint_id; прежние Chat без такой привязки требуют
+создать новый диалог, данные не удаляются. Research version=2 сохраняется.
+Реализация не подтверждает понимание пользователя. Без Store/LTM/Deployment/API.
+Chat version=3: привязка к Research checkpoint_id, а не к latest. CLI:
+--history/--inspect, --replay/--fork с --checkpoint-id, --plan-file для Fork,
+--resume THREAD --checkpoint-id BRANCH_CHECKPOINT; --research-checkpoint-id
+для нового --discuss. Подготовка ветки отделена от выполнения. Report пути
+зависят от artifact_id; Resume сохраняет идентификатор, включая ошибку записи.
+Static флаг --break-before-search сохраняется; dynamic Review по-прежнему
+Command(resume=...), static/error продолжение через None. Исходные данные не удаляются.
+
 Проверка этапа 8: 104 автономных теста, OK; подробности в журнале ниже.
 
 ### Этап 8 — Context Management, Subgraphs и Streaming
@@ -120,7 +139,8 @@ max_results=1; snippet обрезается локально до 500 симво
   на каждый раздел; сохраняемый snippet обрезается до 500 символов после проверки.
   Прежние требования о 3 разделах/80 словах и max_results=3 ниже заменены этим уточнением.
 
-- Последний выполненный этап: 8 — Context Management, Subgraphs и Streaming.
+- Последний выполненный этап: 9 — Breakpoints, Editing State и Time Travel.
+- Статус этапа 9: завершён; 110 автономных тестов, реальные API не вызывались.
 - Статус этапа 8: завершён; автономные проверки, без реальных платных API.
 - Статус этапа 7: завершён; автономные проверки, без реальных платных API.
 - Статус этапа 6: завершён; автономные проверки пройдены, реальные API не вызывались.
@@ -154,7 +174,7 @@ Studio рассматривается концептуально; установ
 | 0. Подготовка | Окружение и ресурсы — использованы в реализации; обзор настройки с пользователем ещё закрепить |
 | 1. Introduction | Motivation — частично; Simple Graph — разобран; Studio — кратко обсуждён, обзор впереди; Chain — реализован прямой диалоговый путь begin_turn/agent/finish в этапе 7; понимание пользователя ещё закрепить; Router — реализован через Conditional Edges и автономно проверен в этапе 4, практика пользователя ещё не подтверждена; Agent и Agent with Memory — ручной Loop/ToolNode и история Chat Thread реализованы и автономно проверены в этапе 7; практика пользователя ещё не подтверждена; optional Intro to Deployment — впереди |
 | 2. State and Memory | State Schema — базовый разбор TypedDict/Pydantic, углубление впереди; State Reducers — operator.add реализован и автономно проверен в этапе 6, практика пользователя ещё не подтверждена; Multiple Schemas — ChatInput/ChatState/ChatOutput с runtime-проверками реализованы в этапе 7; разбор и практика пользователя ещё не подтверждены; Trim and Filter Messages, Summarizing Messages and Memory, Summarizing Messages and External Memory — реализованы и автономно проверены в этапе 8; разбор и практика пользователя ещё не подтверждены |
-| 3. UX and Human-in-the-Loop | Streaming — реализован и автономно проверен в этапе 8; token streaming реального провайдера и практика пользователя не подтверждены; Breakpoints — впереди; Editing State and Human Feedback — реализованы и проверены автономно в этапе 3, практика пользователя ещё не подтверждена; Dynamic Breakpoints — interrupt реализован и проверен, в этапе 5 добавлен Resume из файлового Checkpoint между процессами; понимание и практика пользователя ещё не подтверждены; Time Travel — впереди |
+| 3. UX and Human-in-the-Loop | Streaming — реализован и автономно проверен в этапе 8; token streaming реального провайдера и практика пользователя не подтверждены; Breakpoints — static interrupt_before реализован и автономно проверен в этапе 9; практика пользователя не подтверждена; Editing State and Human Feedback — реализованы и проверены автономно в этапе 3, практика пользователя ещё не подтверждена; Dynamic Breakpoints — interrupt реализован и проверен, в этапе 5 добавлен Resume из файлового Checkpoint между процессами; понимание и практика пользователя ещё не подтверждены; Time Travel — History/Inspection/native Replay/Fork реализованы и автономно проверены в этапе 9; практика пользователя не подтверждена |
 | 4. Building Your Assistant | Parallelization и Map-reduce — Send Workers/Fan-in реализованы и автономно проверены в этапе 6, практика пользователя ещё не подтверждена; Sub-graphs — compiled Agent Subgraph реализован и автономно проверен в этапе 8; практика пользователя не подтверждена; Research Assistant — Plan, Review, последовательный Web Search, Markdown Report и SQLite Persistence интегрированы и автономно проверены в этапе 5; практика пользователя ещё не подтверждена |
 | 5. Long-Term Memory | Short vs. Long-Term Memory — впереди; LangGraph Store — впереди; Memory Schema + Profile — впереди; Memory Schema + Collection — впереди; Agent with Long-Term Memory — впереди |
 | 6. Deployment | Deployment Concepts — впереди; Creating a Deployment — впереди; Connecting to a Deployment — впереди; Double Texting — впереди; Assistants — впереди |
@@ -194,7 +214,8 @@ Studio рассматривается концептуально; установ
 Этот раздел заменяет предварительное предложение маршрута из переписки.
 Этап 7 реализован и проверен автономно; подтверждённой практики пользователя пока нет.
 Этап 8 реализован и проверен автономно; понимание пользователя не подтверждено.
-Этапы 9–11 не реализованы и не считаются изученными.
+Этап 9 реализован и проверен автономно; понимание пользователя не подтверждено.
+Этапы 10–11 не реализованы и не считаются изученными.
 Расширение состоит из пяти этапов 7–11; каждый получает один основной промпт реализации
 с последовательными проверяемыми подзадачами, объяснение, шпаргалку вне
 репозитория и блок «Дополнительно: желательно знать».
@@ -243,7 +264,8 @@ Reducers, Checkpointer и существующий готовый Report.
 
 ### Этап 9 — управление выполнением и альтернативные версии исследования
 
-Статус: запланирован. Предпосылки: Checkpoints, Thread ID, interrupt, Resume.
+Статус: завершён; автономно проверен. Предпосылки: Checkpoints, Thread ID, interrupt, Resume.
+Понимание и практика пользователя остаются неподтверждёнными.
 
 - Academy 3: Breakpoints, Editing State and Human Feedback,
   Dynamic Breakpoints и Time Travel.
@@ -577,7 +599,7 @@ Academy: State Reducers (модуль 2), Parallelization и Map-reduce (мод�
 | 6 | Parallelization, Reducers и Map-Reduce | Завершён |
 | 7 | Обсуждение отчёта: Chain, Agent и Agent with Memory | Завершён; автономно проверен |
 | 8 | Контекст диалога, Subgraphs и Streaming | Завершён; автономно проверен |
-| 9 | Управление выполнением и альтернативные версии исследования | Запланирован |
+| 9 | Управление выполнением и альтернативные версии исследования | Завершён; автономно проверен |
 | 10 | Long-Term Memory пользователя | Запланирован |
 | 11 | Deployment и подготовка репозитория к использованию | Запланирован |
 
@@ -585,6 +607,60 @@ Academy: State Reducers (модуль 2), Parallelization и Map-reduce (мод�
 Статус реализации не заменяет подтверждение понимания и практики пользователя.
 
 ## Журнал выполнения
+
+### 2026-10-21 — этап 9: Breakpoints, Editing State и Time Travel
+
+- Изучены задание, AGENTS/spec, Research/Chat Graph, CLI, Reporting, Persistence,
+  тесты и фактическая версия LangGraph 1.2.16. Вложенных AGENTS.md нет,
+  рабочее дерево до начала было чистым. Исходный набор: 104 теста, 21.043 с, OK.
+  Статус сначала изменён на «в работе»; нумерация 7/8/9 подтверждена.
+- Context7: resolve-library-id LangGraph, затем отдельные query-docs по
+  Time Travel/update_state, Static/Dynamic Breakpoints и Reducers/Overwrite.
+  API проверены на установленной версии, новых пакетов нет.
+- Добавлен history.py: get_state_history/get_state, проверка принадлежности,
+  безопасный Snapshot summary и классификация остановки. Read-only CLI использует
+  SQLite mode=ro, не вызывает invoke/update_state/API/write_report. Неизвестный
+  checkpoint_id не подменяется latest; Chat явно отклоняется.
+- Graph использует настоящий interrupt_before=['prepare_search']; настройка
+  сохраняется в workflow. CLI восстанавливает compile-настройку, различает
+  dynamic interrupt/Static/error/pending/completed; snapshot.next не означает
+  обязательный запрос решения. Динамический Review остаётся прежним interrupt.
+- time_travel.py валидирует Snapshot перед завершением Review: next/Tasks,
+  Plan/topic, отсутствие Search/Report. В установленном LangGraph pending
+  interrupt прикрепляется к тому же post-generate_plan Checkpoint: его наличие
+  само по себе не означает утверждённый Plan. Это учтено и проверено новым Review.
+  SQLite config для exact Checkpoint явно содержит checkpoint_ns=''.
+- Replay сохраняет Plan, Fork валидирует альтернативный JSON. Оба создают native
+  update_state(selected.config, ..., as_node='generate_plan'), возвращают новый
+  config/Checkpoint и не выполняют Nodes. Следующий Node — Review; выполнение
+  только отдельным --resume. Overwrite([]) явно обходит operator.add.
+- artifact_id UUID сохраняется в workflow; reporting.report_target строит иной
+  hash-путь для альтернативы. inspect_thread проверяет идентификатор и report_path;
+  save_report проверяет output-dir. Исходный файл сохраняется, Resume ошибочной
+  записи использует прежний artifact_id/путь без повторного Search/Report generation.
+- Chat version=3 обоснована новым обязательным pin Research checkpoint_id.
+  Research version=2 не повышалась: настройки необязательны, старые State совместимы.
+  Chat v1/v2 отклоняются без миграции/удаления с инструкцией нового --discuss.
+  --research-checkpoint-id выбирает исходный или альтернативный completed Report.
+  Уже созданный Chat не сравнивает материалы с latest и работает после Fork.
+- Новые tests/test_history.py, test_breakpoints.py, test_time_travel.py,
+  test_checkpoint_cli.py, breakpoint_worker.py проверяют все 17 групп критериев
+  задания. Static Resume проверен в трёх отдельных процессах. Проверены неверный
+  JSON без создания Checkpoint, чужие/неизвестные ID, неподдерживаемые точки,
+  новый Review, отсутствие повторного Plan, отдельные Report, ошибка записи и
+  стабильность artifact_id, изоляция поиска, pinned Chat и выбор обоих Report.
+- Сначала новые тесты подтвердили отсутствие модулей/Static API. Фактическая
+  структура pending interrupts и обязательный SQLite checkpoint_ns уточнены
+  по неуспешным автономным проверкам. Финальный unittest discover -s tests -q:
+  110 тестов, 26.094 с, OK, код 0. compileall research_assistant tests — код 0;
+  pip check — No broken requirements found; git diff --check — код 0, только
+  уведомления LF/CRLF. Windows/Python 3.12.14; прочие версии отдельно не проверялись.
+- Все API подменены; временная SQLite/файлы и локальный HTTP MockTransport.
+  Реальные платные вызовы не выполнялись, .env не читался и не менялся.
+  Replay повторяет Search/Report/запись после нового Review, не отменяет прошлые
+  внешние эффекты; exactly-once не гарантируется. Ветвление Chat/Subgraph, Store,
+  LTM и Deployment не добавлены. Карта Academy отражает реализацию, а не
+  подтверждённое понимание пользователя. Коммит и push не выполнялись.
 
 ### 2026-10-21 — согласование единой нумерации
 
@@ -1051,4 +1127,12 @@ Academy: State Reducers (модуль 2), Parallelization и Map-reduce (мод�
 - Перед публикацией: unittest discover -s tests -v — 104 теста, 20.734 с, OK;
   compileall и git diff --check — код 0. Платные API не вызывались.
 - Публикуются Context Management, Agent Subgraph, Streaming, тесты и документация.
+- .env, локальные Checkpoints и отчёты исключены из Git.
+
+### 2026-10-21 — публикация этапа 9
+
+- Пользователь разрешил продолжить коммит и push текущих изменений в origin/main.
+- Перед публикацией: unittest discover -s tests -v — 110 тестов, 26.774 с, OK;
+  compileall и git diff --check — код 0. Реальные API не вызывались.
+- Публикуются Breakpoints, History/Inspection, Replay/Fork, тесты и документация.
 - .env, локальные Checkpoints и отчёты исключены из Git.

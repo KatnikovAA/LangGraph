@@ -78,9 +78,14 @@ def render_report(draft: ReportDraft | dict, sources: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def write_report(markdown: str, output_dir: str, thread_id: str) -> str:
+def report_target(output_dir: str, thread_id: str, artifact_id: str | None = None) -> Path:
+    identity = thread_id if artifact_id is None else f'{thread_id}:artifact:{artifact_id}'
+    return Path(output_dir) / f"report-{hashlib.sha256(identity.encode('utf-8')).hexdigest()}.md"
+
+
+def write_report(markdown: str, output_dir: str, thread_id: str, *, artifact_id: str | None = None) -> str:
     """Deterministic filename and atomic replacement make retries idempotent."""
-    target = Path(output_dir) / f"report-{hashlib.sha256(thread_id.encode('utf-8')).hexdigest()}.md"
+    target = report_target(output_dir, thread_id, artifact_id)
     temporary = None
     try:
         target.parent.mkdir(parents=True, exist_ok=True)

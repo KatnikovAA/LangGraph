@@ -12,18 +12,22 @@ from research_assistant.chat import (
 from research_assistant.chat_context import ContextBudget
 from research_assistant.graph import build_graph
 from research_assistant.persistence import inspect_thread, open_saver
+from research_assistant.history import research_checkpoint
 
 
-def research_materials(saver, research_id: str, db: str) -> dict:
+def research_materials(saver, research_id: str, db: str, checkpoint_id: str | None = None, *, include_checkpoint=False) -> dict:
     """Read a research checkpoint without invoking its workflow or reading files."""
     graph = build_graph(review=True, search=True, report=True, checkpointer=saver)
     config = {'configurable': {'thread_id': research_id}}
-    snapshot = inspect_thread(graph, config, db)
+    snapshot = (research_checkpoint(graph, research_id, checkpoint_id, db) if checkpoint_id
+                else inspect_thread(graph, config, db))
+    inspect_thread(graph, snapshot.config, db)
     if snapshot.next or snapshot.values.get('status') != 'completed':
         raise ChatError('Обсуждение доступно только для завершённого Research Thread со статусом completed.')
-    return validate_materials({'research_thread_id': research_id,
+    data = validate_materials({'research_thread_id': research_id,
                               'report_markdown': snapshot.values.get('report_markdown'),
                               'sources': snapshot.values.get('sources')})
+    return {**data, 'research_checkpoint_id': snapshot.config['configurable']['checkpoint_id']} if include_checkpoint else data
 
 
 def inspect_chat(graph, config: dict, db: str, saver):
@@ -35,16 +39,18 @@ def inspect_chat(graph, config: dict, db: str, saver):
             or settings.get('mode') != CHAT_MODE):
         research_id = settings.get('research_thread_id') if isinstance(settings, dict) else None
         hint = f' --discuss {research_id} --question "Ваш вопрос"' if isinstance(research_id, str) else ' --discuss RESEARCH_ID --question "Ваш вопрос"'
-        raise ChatError('Несовместимая версия или режим Chat Thread. Нужна Chat version=2; '
+        raise ChatError('Несовместимая версия или режим Chat Thread. Нужна Chat version=3 с Research checkpoint_id; '
                         'старые данные сохранены. Создайте новый Chat Thread по тому же исследованию:' + hint)
     research_id = settings.get('research_thread_id')
+    research_cp = settings.get('research_checkpoint_id')
     if (settings.get('thread_id') != config['configurable']['thread_id']
             or settings.get('checkpoint_db') != db or not isinstance(research_id, str) or not research_id
             or snapshot.values.get('research_thread_id') != research_id
-            or research_id == config['configurable']['thread_id']):
+            or research_id == config['configurable']['thread_id']
+            or not isinstance(research_cp, str) or not research_cp):
         raise ChatError('Некорректная привязка Chat Thread к исследованию или базе.')
     saved = validate_materials({key: snapshot.values.get(key) for key in ('research_thread_id', 'report_markdown', 'sources')})
-    if saved != research_materials(saver, research_id, db):
+    if saved != research_materials(saver, research_id, db, research_cp):
         raise ChatError('Материалы Chat Thread не совпадают со связанным исследованием.')
     validate_context_state(snapshot.values)
     return snapshot
@@ -67,7 +73,8 @@ def run_chat(args) -> dict:
         graph = build_chat_graph(checkpointer=saver, context_budget=ContextBudget(
             **{key: value for key, value in budget_options.items() if value is not None}))
         if args.discuss is not None:
-            materials = research_materials(saver, args.discuss, db)
+            materials = research_materials(saver, args.discuss, db, getattr(args, 'research_checkpoint_id', None),
+                                           include_checkpoint=True)
             initialize_chat(graph, config, materials, db)
             snapshot = graph.get_state(config)
         else:
@@ -88,4 +95,5 @@ def run_chat(args) -> dict:
         else:
             result = graph.invoke(graph_input, config, durability='sync')
         return {**result, 'chat_thread_id': chat_id, 'research_thread_id': snapshot.values['research_thread_id'],
+                'research_checkpoint_id': snapshot.values['chat_settings']['research_checkpoint_id'],
                 'checkpoint_db': db}

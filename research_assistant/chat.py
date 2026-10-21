@@ -21,7 +21,7 @@ from research_assistant.chat_errors import ChatError
 from research_assistant.chat_context import (ContextBudget, budget_for, estimate_tokens, filter_history,
     select_context, summary_candidates, summary_context, summarize_with_model)
 
-CHAT_VERSION = 2
+CHAT_VERSION = 3
 CHAT_MODE = 'report_chat'
 MAX_MODEL_CALLS = 3
 MAX_TOOL_CALLS = 3
@@ -263,9 +263,12 @@ def build_chat_graph(*, checkpointer, model_factory=None, summarizer=None, conte
 
 
 def initialize_chat(graph, config: dict, data: dict, db: str) -> None:
+    research_checkpoint_id = data.get('research_checkpoint_id')
+    data = {key: value for key, value in data.items() if key != 'research_checkpoint_id'}
     data = validate_materials(data)
     settings = {'version': CHAT_VERSION, 'mode': CHAT_MODE, 'thread_id': config['configurable']['thread_id'],
-                'research_thread_id': data['research_thread_id'], 'checkpoint_db': str(Path(db).resolve())}
+                'research_thread_id': data['research_thread_id'], 'checkpoint_db': str(Path(db).resolve()),
+                'research_checkpoint_id': research_checkpoint_id}
     # Seed a fresh Chat Thread without an API call; the next invoke starts a new question.
     if graph.get_state(config).values:
         raise ChatError('Chat Thread уже существует; создание поверх сохранённой истории запрещено.')

@@ -519,6 +519,7 @@ ID и диагностические сообщения — stderr. Наприм
   "status": "answered",
   "chat_thread_id": "новый-ID-диалога",
   "research_thread_id": "ID-исследования",
+  "research_checkpoint_id": "ID-завершённого-Research-Checkpoint",
   "checkpoint_db": "F:\\AI Agent\\LangGraph\\.research_assistant\\checkpoints.sqlite"
 }
 ```
@@ -562,10 +563,11 @@ ToolNode через скрытый InjectedState; модель управляе�
   Report, компактным каталогом ID и Summary + отобранные последние Messages. SystemMessage и копия
   Report не добавляются к messages. Checkpointer сохраняет историю, но не решает,
   что получает модель: это делает код построения контекста.
-- Chat имеет отдельные `mode="report_chat"`, `version=2`, Research остаётся
+- Chat имеет отдельные `mode="report_chat"`, `version=3`, Research остаётся
   `mode="review_search_report"`, `version=2`. Совместимые Research Checkpoints
   читаются без миграции и изменений. Версия, режим, ID, база, привязка и совпадение
-  материалов со связанным Research проверяются перед продолжением.
+  материалов с закреплённым Research checkpoint_id проверяются перед продолжением.
+  Изменение latest Checkpoint не подменяет исходный Report диалога.
 - Статусы Chat: `ready` после создания, `answering` во время вопроса,
   `answered` при обычном завершении, `limited` при остановке по бюджету.
   Ошибка модели даёт код 2 и понятное сообщение без ответа JSON и без секретов.
@@ -686,7 +688,7 @@ RunnableConfig передаётся в Subgraph и модели. При ошиб
 Проверены Resume внутри Agent Loop и восстановление в другом процессе без
 повторного HumanMessage/ToolMessage. Неудачный API-вызов может повториться.
 
-Chat version=1 **не мигрируется**: CLI отказывает с инструкцией создать новый Chat
+Chat version=1/2 **не мигрируется**: CLI отказывает с инструкцией создать новый Chat
 по тому же completed Research Thread через `--discuss RESEARCH_ID --question ...`.
 Старая история и БД сохраняются. Research version=2 совместима и не меняется.
 
@@ -745,9 +747,171 @@ stdout содержит единственный финальный JSON. При
 | messages | События сообщений/chunks модели вместе с metadata |
 | Namespace | Путь дочернего выполнения; отличает Agent Subgraph от Parent/Summarizer |
 
-Store, Long-Term Memory, Time Travel, новые Breakpoints и Deployment не добавлены.
+На этапе 8 Store, Long-Term Memory, Time Travel, новые Breakpoints и Deployment не добавлялись.
 История и Checkpoints не удаляются и могут расти на диске. Наличие реализации
 не означает подтверждённого изучения тем Academy пользователем.
+
+## History, Breakpoints и Time Travel — этап 9
+
+Time Travel доступен только для Research; Chat/Subgraph здесь не ветвятся.
+Research Workflow остаётся версии 2: новые настройки необязательны, прежние
+Checkpoints без них читаются. Chat версии 3 хранит конкретный завершённый
+Research checkpoint_id в chat_settings. Диалоги версий 1/2 не имеют надёжной
+привязки к версии Report и отклоняются без изменения/удаления данных; создайте
+новый Chat, явно выбрав нужный завершённый Checkpoint.
+
+### History → Inspection → Fork → Review → Report → Chat
+
+```powershell
+Set-Location 'F:\AI Agent\LangGraph'
+$threadId = 'ВСТАВЬТЕ_RESEARCH_THREAD_ID'
+$db = 'F:\AI Agent\LangGraph\.research_assistant\checkpoints.sqlite'
+
+# Только чтение: новые Checkpoints, API и Report не создаются.
+$history = .\.venv\Scripts\python.exe -m research_assistant --history $threadId --checkpoint-db $db | ConvertFrom-Json
+$history.checkpoints | Format-Table checkpoint_id, status, next, stop_kind
+
+# Сохраните ID исходного завершённого результата для его обсуждения.
+$original = $history.checkpoints | Where-Object { $_.status -eq 'completed' -and $_.next.Count -eq 0 } | Select-Object -First 1
+
+# Поддерживается точка после generate_plan, до завершения Review/начала поиска.
+$point = $history.checkpoints | Where-Object { $_.status -eq 'planned' -and ($_.next -join ',') -eq 'review_plan' } | Select-Object -First 1
+$checkpointId = $point.checkpoint_id
+.\.venv\Scripts\python.exe -m research_assistant --inspect $threadId --checkpoint-id $checkpointId --checkpoint-db $db
+
+# Создайте или отредактируйте файл альтернативного Plan.
+@'
+{
+  "title": "Альтернативный план",
+  "sections": [{"title": "Управление состоянием", "questions": ["Как сохраняется состояние?"]}]
+}
+'@ | Set-Content -LiteralPath '.\alternative-plan.json' -Encoding utf8
+
+# Подготовка Fork: native update_state, без API и выполнения Nodes.
+$fork = .\.venv\Scripts\python.exe -m research_assistant --fork $threadId --checkpoint-id $checkpointId --plan-file '.\alternative-plan.json' --checkpoint-db $db | ConvertFrom-Json
+$fork
+$forkCheckpointId = $fork.checkpoint_id
+
+# Отдельное явное выполнение. В Review введите 1 для утверждения.
+$report = .\.venv\Scripts\python.exe -m research_assistant --resume $threadId --checkpoint-id $forkCheckpointId --checkpoint-db $db | ConvertFrom-Json
+$report.report_path
+$report.checkpoint_id
+
+# Обсуждение именно выбранного завершённого результата:
+.\.venv\Scripts\python.exe -m research_assistant --discuss $threadId --research-checkpoint-id $report.checkpoint_id --question 'Что изменилось в выводах?' --checkpoint-db $db
+
+# Независимое обсуждение исходного Report:
+.\.venv\Scripts\python.exe -m research_assistant --discuss $threadId --research-checkpoint-id $original.checkpoint_id --question 'Каков исходный вывод?' --checkpoint-db $db
+```
+
+Если выбранная ветка наследует Static Breakpoint, первая команда Resume вернёт
+`paused=true`, `stop_kind="static_breakpoint"`, а не Report. Тогда продолжите её:
+
+```powershell
+$report = .\.venv\Scripts\python.exe -m research_assistant --resume $threadId --checkpoint-id $report.checkpoint_id --checkpoint-db $db | ConvertFrom-Json
+```
+
+Replay подготавливается аналогично, но сохраняет прежний Plan:
+
+```powershell
+$replay = .\.venv\Scripts\python.exe -m research_assistant --replay $threadId --checkpoint-id $checkpointId --checkpoint-db $db | ConvertFrom-Json
+.\.venv\Scripts\python.exe -m research_assistant --resume $threadId --checkpoint-id $replay.checkpoint_id --checkpoint-db $db
+```
+
+History/Inspection открывают SQLite в режиме `mode=ro`, вызывают
+`get_state_history()`/`get_state()` и показывают только разрешённые поля:
+Thread/Checkpoint/Parent ID, время, status, next, вид остановки, название/число
+разделов Plan, наличие/путь Report и идентификатор альтернативы. Полный State,
+Report, тексты ошибок Tasks и SDK-данные не печатаются. Неизвестный ID и ID
+другого Thread отклоняются, latest вместо них не подставляется. Chat явно
+отличается от Research и в этих командах не поддерживается.
+
+### Static и Dynamic Breakpoints
+
+```powershell
+# Новый полный Workflow с остановкой перед поиском:
+.\.venv\Scripts\python.exe -m research_assistant --topic 'Архитектура LangGraph' --review --search --report --pause-after-plan --break-before-search
+
+# Подставьте полученный Thread ID. Утвердите Plan через 1:
+.\.venv\Scripts\python.exe -m research_assistant --resume 'THREAD_ID'
+
+# После static_breakpoint — без повторного Review, в том числе в новом процессе:
+.\.venv\Scripts\python.exe -m research_assistant --resume 'THREAD_ID'
+```
+
+`--break-before-search` сохраняет настройку в workflow и использует настоящий
+`compile(interrupt_before=['prepare_search'])`. Без флага прежний путь сохранён.
+Static остановка — инспекция перед поиском, продолжение `invoke(None, config)`.
+Dynamic остановка — существующий `review_plan/interrupt()`, продолжение только
+через `Command(resume=decision)`. `snapshot.next` само по себе не означает Review:
+CLI различает `dynamic_interrupt`, `static_breakpoint`, `error`, `pending` и
+`completed`. Ошибка Task имеет приоритет, текст исключения не показывается History.
+
+### Native branching и файлы
+
+Для Replay/Fork разрешён только Snapshot с `next=('review_plan',)`, Tasks Review,
+непустой normalized_topic, валидным Plan и без Search Jobs/Batches/Sources/Report.
+Одного `status="planned"` недостаточно. Pending interrupt может быть metadata
+этого же Checkpoint: State всё ещё содержит вход Review. Checkpoints после
+утверждения, поиска, ошибок Review или завершённого Report отклоняются.
+
+Fork валидирует UTF-8 JSON существующей схемой ResearchPlan. Обе операции сначала
+создают идентифицируемую ветку через `update_state(selected.config, ..., as_node='generate_plan')`.
+`as_node` означает авторство обновления, а не запуск Node: следующий Node —
+`review_plan`, как после generate_plan. Продолжение использует config, возвращённый
+update_state. Исходный Checkpoint остаётся доступен; Thread ID тот же, Checkpoint
+ID новый, parent_config связывает его с выбранной исходной точкой. Latest меняется.
+Завершённые предшествующие Nodes не выполняются повторно; Review запрашивает новое
+решение, прежнее approve не переносится.
+
+Каждая подготовка, включая Replay, получает новый UUID `artifact_id` в workflow.
+Обычный Report использует `sha256(thread_id)`, альтернатива —
+`sha256(thread_id + ':artifact:' + artifact_id)` в имени `report-HASH.md`.
+Output-dir сохраняется; путь проверяется на соответствие artifact_id. Resume
+одной альтернативы сохраняет идентификатор и путь, включая восстановление после
+ошибки записи. Исходный Report не перезаписывается. Пример с условными ID:
+
+```text
+Thread T, Checkpoint C0 (Plan A перед Review)
+├─ Review A → поиск A → Report A, Checkpoint CA
+│  reports/report-<sha256(T)>.md
+└─ update_state(C0, Plan B, artifact_id=B) → Checkpoint CB0
+   └─ новый Review → поиск B → Report B, Checkpoint CB
+      reports/report-<sha256(T + ':artifact:' + B)>.md
+
+Chat A закреплён за T/CA; Chat B — за T/CB, независимо от latest.
+```
+
+Чистота ветки проверяется до записи. Для reducer operator.add используется
+`Overwrite([])`: простой `[]` не очистил бы накопленное значение. Replay/Fork не
+отменяют уже выполненные внешние действия: после Review повторяются Search API,
+генерация Report и атомарная запись нового файла. Явный Resume ошибочного вызова
+может повторить его; exactly-once не гарантируется. Подготовка ветки API не вызывает.
+Для исторической незавершённой точки сначала используйте --replay/--fork;
+--resume --checkpoint-id продолжает подготовленную альтернативу или читает
+завершённый результат. При нескольких альтернативах передавайте ID явно.
+
+### Термины и порядок чтения
+
+| Термин | Значение в приложении |
+| --- | --- |
+| StateSnapshot | Сохранённые values, next, Tasks, config и parent_config |
+| checkpoint_id | Точный ID состояния внутри Research Thread |
+| Static Breakpoint | Остановка interrupt_before перед prepare_search |
+| Dynamic Breakpoint | Существующий interrupt в Review с решением пользователя |
+| Editing State | Обновление Plan через native update_state без выполнения Nodes |
+| Time Travel | Работа с выбранной исторической точкой, не отмена внешних действий |
+| Replay | Ветка с прежним Plan, повторно выполняющая последующие Nodes |
+| Fork | Ветка с альтернативным Plan и отдельным artifact_id |
+| update_state | Создаёт новый Checkpoint; применяет Reducers |
+| as_node | Указывает Node-автора обновления и определяет следующий переход |
+
+Читать: `history.py` → `time_travel.py` → `persistence.py` → `graph.py`
+(`interrupt_before`, save_report) → `reporting.py` (report_target) → `cli.py` →
+`chat_session.py` (Research checkpoint pin). Новых зависимостей нет: StateSnapshot,
+get_state/history/update_state, Overwrite и interrupt_before — прежний LangGraph;
+ResearchPlan — прежний Pydantic; sqlite3, uuid, pathlib/hashlib — стандартный Python.
+Store, Long-Term Memory, Deployment и Time Travel для Chat не добавлены.
 
 ## Проверки
 
@@ -802,3 +966,10 @@ Filter/Trim по целым Tool-блокам, пороги и инкремен�
 `test_chat_streaming.py` проверяет updates/messages с Namespace, выдачу chunks
 до окончания генерации, сокрытие Summary/Tools/reasoning, единственный JSON,
 обычный режим, Resume и отсутствие второго запуска ради финала.
+
+`test_history.py`, `test_breakpoints.py`, `test_time_travel.py`,
+`test_checkpoint_cli.py` и `breakpoint_worker.py` проверяют чтение без API/записи,
+принадлежность ID, отказ для Chat/неподдерживаемых точек, три процесса Dynamic →
+Static → completed, Replay/Fork с новым Review без повторного Plan, неизменность
+исходных Checkpoints/Report, отсутствие смешивания Reducers, восстановление после
+ошибки записи с прежним artifact_id/путём и Chat, закреплённый за выбранным Report.

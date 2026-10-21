@@ -18,6 +18,8 @@ from research_assistant.reporting import ReportError
 from research_assistant.persistence import PersistenceError, open_saver, workflow_settings, inspect_thread
 from research_assistant.chat import ChatError
 from research_assistant.chat_session import run_chat
+from research_assistant.history import research_history, research_checkpoint, describe_snapshot, stop_kind
+from research_assistant.time_travel import prepare_branch
 
 
 def show_plan(plan: dict) -> None:
@@ -87,9 +89,16 @@ def persistent_run(args) -> dict:
         if args.resume:
             # Inspect before any invocation; no SDK clients are constructed here.
             probe = build_graph(review=True, search=True, report=True, checkpointer=saver)
-            snapshot = inspect_thread(probe, config, db)
+            checkpoint_id = getattr(args, 'checkpoint_id', None)
+            snapshot = (research_checkpoint(probe, thread_id, checkpoint_id, db) if checkpoint_id
+                        else inspect_thread(probe, config, db))
+            inspect_thread(probe, snapshot.config, db)
+            if checkpoint_id and snapshot.next and not snapshot.values['workflow'].get('artifact_id'):
+                raise PersistenceError('Исторический Checkpoint сначала подготовьте через --replay или --fork.')
+            config = {**snapshot.config, 'max_concurrency': MAX_CONCURRENCY}
             output = snapshot.values['workflow']['output_dir']
-            graph = build_graph(review=True, search=True, report=True, output_dir=output, checkpointer=saver)
+            graph = build_graph(review=True, search=True, report=True, output_dir=output, checkpointer=saver,
+                                break_before_search=snapshot.values['workflow'].get('break_before_search', False))
             if not snapshot.next:
                 result = dict(snapshot.values)
             elif any(task.interrupts for task in snapshot.tasks):
@@ -99,6 +108,7 @@ def persistent_run(args) -> dict:
             else:
                 result = graph.invoke(None, config, durability='sync')
                 if result.get('__interrupt__'):
+                    config = graph.get_state({'configurable': {'thread_id': thread_id}}).config
                     require_terminal()
                     decision = request_review(result['__interrupt__'][0].value['plan'])
                     result = graph.invoke(Command(resume=decision), config, durability='sync')
@@ -106,15 +116,41 @@ def persistent_run(args) -> dict:
             output = str(Path(args.output_dir or 'reports').resolve())
             if not args.pause_after_plan:
                 require_terminal()
-            graph = build_graph(review=True, search=True, report=True, output_dir=output, checkpointer=saver)
-            result = graph.invoke({'topic': args.topic, 'workflow': workflow_settings(db, output, thread_id)},
+            breakpoint = getattr(args, 'break_before_search', False)
+            graph = build_graph(review=True, search=True, report=True, output_dir=output, checkpointer=saver,
+                                break_before_search=breakpoint)
+            result = graph.invoke({'topic': args.topic, 'workflow': workflow_settings(db, output, thread_id,
+                                  break_before_search=breakpoint)},
                                   config, durability='sync')
             if not args.pause_after_plan:
                 decision = request_review(result['__interrupt__'][0].value['plan'])
                 result = graph.invoke(Command(resume=decision), config, durability='sync')
-        paused = bool(result.get('__interrupt__'))
+        current = (snapshot if args.resume and not snapshot.next
+                   else graph.get_state({'configurable': {'thread_id': thread_id}}))
+        paused = bool(current.next)
         return {key: value for key, value in result.items() if key != '__interrupt__'} | {
-            'thread_id': thread_id, 'checkpoint_db': db, 'paused': paused}
+            'thread_id': thread_id, 'checkpoint_db': db, 'paused': paused,
+            'checkpoint_id': current.config['configurable']['checkpoint_id'], 'stop_kind': stop_kind(current)}
+
+
+def checkpoint_command(args) -> dict:
+    db = str(Path(args.checkpoint_db or '.research_assistant/checkpoints.sqlite').resolve())
+    thread_id = args.history or args.inspect or args.replay or args.fork
+    with open_saver(db, existing=True, read_only=bool(args.history or args.inspect)) as saver:
+        graph = build_graph(review=True, search=True, report=True, checkpointer=saver)
+        if args.history:
+            return {'thread_id': thread_id, 'checkpoints': [describe_snapshot(s) for s in research_history(graph, thread_id, db)]}
+        if args.inspect:
+            return describe_snapshot(research_checkpoint(graph, thread_id, args.checkpoint_id, db))
+        new_plan = None
+        if args.fork:
+            try:
+                new_plan = ResearchPlan.model_validate_json(Path(args.plan_file).read_text(encoding='utf-8-sig')).model_dump(mode='json')
+            except (OSError, ValueError) as error:
+                raise PersistenceError('Не удалось прочитать корректный UTF-8 JSON Plan: нужны title и sections.') from error
+        config = prepare_branch(graph, thread_id, args.checkpoint_id, db,
+                                operation='fork' if args.fork else 'replay', new_plan=new_plan)
+        return {**describe_snapshot(graph.get_state(config)), 'checkpoint_db': db, 'prepared': True}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -132,6 +168,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--output-dir', help='Каталог отчётов (по умолчанию reports/)')
     parser.add_argument('--pause-after-plan', action='store_true', help='Сохранить Pause без запроса решения')
     parser.add_argument('--resume', metavar='THREAD_ID', help='Продолжить сохранённый полный режим')
+    checkpoint_modes = parser.add_mutually_exclusive_group()
+    for flag in ('history', 'inspect', 'replay', 'fork'):
+        checkpoint_modes.add_argument('--' + flag, metavar='THREAD_ID', help='Research ' + flag)
+    parser.add_argument('--checkpoint-id', help='Точный Research Checkpoint для inspect/replay/fork/resume')
+    parser.add_argument('--plan-file', help='UTF-8 JSON альтернативного Plan для --fork')
+    parser.add_argument('--break-before-search', action='store_true', help='Static Breakpoint перед prepare_search')
+    parser.add_argument('--research-checkpoint-id', help='Завершённый Research Checkpoint для нового --discuss')
     parser.add_argument('--discuss', metavar='RESEARCH_ID', help='Создать обсуждение завершённого исследования')
     parser.add_argument('--chat', metavar='CHAT_ID', help='Продолжить отдельный диалог по отчёту')
     parser.add_argument('--question', help='Один вопрос по отчёту')
@@ -144,11 +187,37 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     budget_flags = any(getattr(args, key) is not None for key in (
         'context_budget', 'answer_reserve', 'summary_threshold', 'summary_budget', 'recent_turns'))
+    if args.history or args.inspect or args.replay or args.fork:
+        incompatible = (args.topic is not None or args.resume is not None or args.review or args.search or args.report
+            or args.pause_after_plan or args.output_dir is not None or args.discuss is not None or args.chat is not None
+            or args.question is not None or args.stream or budget_flags or args.break_before_search
+            or args.research_checkpoint_id is not None)
+        if (incompatible or (args.history is not None and (args.checkpoint_id is not None or args.plan_file is not None))
+                or (args.history is None and not args.checkpoint_id)
+                or (args.fork is not None) != (args.plan_file is not None)):
+            print('Ошибка: history допускает только THREAD_ID/--checkpoint-db; inspect/replay/fork требуют '
+                  '--checkpoint-id, только fork требует --plan-file. Режимы смешивать нельзя.', file=sys.stderr)
+            return 2
+        try:
+            result = checkpoint_command(args)
+        except (PersistenceError, ConfigurationError) as error:
+            print(f'Ошибка: {error}', file=sys.stderr)
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    if (args.plan_file is not None or (args.checkpoint_id is not None and (args.resume is None or not args.checkpoint_id.strip()))
+            or (args.research_checkpoint_id is not None and args.discuss is None)
+            or (args.research_checkpoint_id is not None and not args.research_checkpoint_id.strip())
+            or (args.break_before_search and (not args.report or args.resume is not None))):
+        print('Ошибка: checkpoint-id требует resume; plan-file требует fork; research-checkpoint-id требует discuss; '
+              'break-before-search задаётся только для нового полного Research.', file=sys.stderr)
+        return 2
     if args.discuss is not None or args.chat is not None or args.question is not None or args.stream or budget_flags:
         if ((args.discuss is None and args.chat is None) or (args.discuss is not None and args.chat is not None)
                 or (args.discuss is not None and (not args.discuss.strip() or args.question is None))
                 or args.topic is not None or args.resume is not None or args.review or args.search
                 or args.report or args.pause_after_plan or args.output_dir is not None
+                or args.break_before_search
                 or (budget_flags and args.discuss is None)):
             print('Ошибка: используйте --discuss RESEARCH_ID --question TEXT либо --chat CHAT_ID [--question TEXT], '
                   'с необязательными --checkpoint-db/--stream; бюджеты задаются только при --discuss. '
