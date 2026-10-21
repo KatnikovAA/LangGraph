@@ -526,10 +526,12 @@ ID и диагностические сообщения — stderr. Наприм
 ### Ручной Agent Loop и локальный Tool
 
 ```text
-START → begin_turn → agent → Router
-                         ├─ нет tool_calls → finish → END
-                         ├─ есть tool_calls → ToolNode(get_source) → agent
-                         └─ достигнут лимит → stop → END
+Parent: START → begin_turn → context_gate → [summarize] → prepare_context
+       → run_agent (compiled Subgraph) → finish → END
+Subgraph: START → agent → Router
+                       ├─ нет tool_calls → finish → END
+                       ├─ есть tool_calls → ToolNode(get_source) → agent
+                       └─ достигнут лимит → stop → END
 ```
 
 `get_source(source_id)` возвращает сохранённые title, URL и snippet. ID S1, S2
@@ -557,10 +559,10 @@ ToolNode через скрытый InjectedState; модель управляе�
   с тем же ID обновляются. begin_turn возвращает только один новый HumanMessage;
   agent и ToolNode — только свои новые сообщения. Предыдущую историю CLI не пересылает.
 - Контекст собирается явно в model_context: один SystemMessage с правилами,
-  Report и компактным каталогом ID + сохранённые Messages. SystemMessage и копия
+  Report, компактным каталогом ID и Summary + отобранные последние Messages. SystemMessage и копия
   Report не добавляются к messages. Checkpointer сохраняет историю, но не решает,
   что получает модель: это делает код построения контекста.
-- Chat имеет отдельные `mode="report_chat"`, `version=1`, Research остаётся
+- Chat имеет отдельные `mode="report_chat"`, `version=2`, Research остаётся
   `mode="review_search_report"`, `version=2`. Совместимые Research Checkpoints
   читаются без миграции и изменений. Версия, режим, ID, база, привязка и совпадение
   материалов со связанным Research проверяются перед продолжением.
@@ -582,8 +584,8 @@ ToolNode через скрытый InjectedState; модель управляе�
 exactly-once API-вызовов не гарантируется.
 
 Ответы запрашиваются краткими на русском (ориентир до 100 слов), но это инструкция,
-а не жёсткий лимит. Вся история передаётся модели; без Trim/Summary она растёт,
-увеличивая контекст и стоимость. Память здесь — Short-Term Memory одного Thread
+а не жёсткий лимит. Модель получает ограниченный контекст, полная история
+остаётся в Checkpoints. Память здесь — Short-Term Memory одного Thread
 в SQLite, не LangGraph Store и не Long-Term Memory. Чаты изолированы по ID.
 Snippets остаются фрагментами Search API; их наличие не подтверждает чтение страниц
 и не гарантирует фактическую правильность ответа. Нового Web Search в диалоге нет.
@@ -603,9 +605,149 @@ Snippets остаются фрагментами Search API; их наличие
 | add_messages | Reducer истории: добавление сообщений и обновление по ID |
 | Multiple Schemas | Раздельные вход, внутренний State и выход Graph |
 
-Порядок чтения: `chat.py` (схемы, get_source, контекст, Nodes и Router) →
+Порядок чтения: `chat_context.py` (бюджеты, Filter/Trim/Summary) →
+`chat.py` (Parent, Subgraph, get_source и Router) → `chat_streaming.py` (события) →
 `chat_session.py` (привязка, SQLite, создание и продолжение) → `cli.py` (флаги).
 Исходный Research Graph в graph.py не стал Subgraph и не изменён этим этапом.
+
+### Context Management и Summary
+
+Parent State хранит полную messages, summary и summarized_through — ID последнего
+сообщения пересказанной завершённой реплики. Filter исключает этот префикс из
+входа модели; Trim убирает старейшие целые реплики, если бюджет ещё превышен.
+Один блок — HumanMessage, все последующие AI/Tool Messages и финальный AIMessage
+до следующего HumanMessage. Поэтому Tool Calls и соответствующие результаты не
+разрываются. Использованы явные функции отбора, без langmem и без удаления Messages.
+
+Summarization запускается, когда оценка ещё не пересказанных завершённых реплик
+достигла порога и есть реплики старше сохраняемого хвоста. Вход Summarizer:
+прежнее Summary + новый завершённый префикс, без повторного пересказа старого.
+Последние `recent_turns` завершённых реплик не пересказываются. Если их слишком
+много для входа, Trim всё равно может исключить старейшие из контекста; текущий
+вопрос и весь его Agent Loop остаются дословно. Все сообщения остаются в SQLite.
+Summary — данные, не инструкции и не замена Report/Sources.
+
+Настройки задаются **только при создании** через `--discuss`, сохраняются в State
+и не меняются при `--chat`, в том числе после перезапуска:
+
+| Параметр | По умолчанию | Назначение |
+| --- | --- | --- |
+| `--context-budget` | 8192 | Общий приблизительный бюджет входа плюс резерв ответа |
+| `--answer-reserve` | 512 | Место для ответа Agent; не API max_tokens |
+| `--summary-threshold` | 1600 | Порог Summarization завершённой ещё не пересказанной истории |
+| `--summary-budget` | 512 | Бюджет Summary, включая обвязку оценки; также резерв ответа Summarizer |
+| `--recent-turns` | 2 | Последние завершённые реплики без пересказа |
+
+Подсчёт **приблизительный**: длина JSON в символах / 3 с округлением вверх плюс
+служебная надбавка. Учитываются правила, Report, каталог Sources, схема Tool,
+Summary, выбранная история, текущий вопрос, результаты Tools и резерв ответа.
+Это не tokenizer провайдера, точный предел конкретной модели не гарантируется.
+Проверка повторяется перед каждым вызовом Agent, в том числе после ToolNode.
+Если обязательные данные или текущий вопрос с Tool-результатами не помещаются,
+модель не вызывается, CLI возвращает ошибку. Для такого вопроса создайте новый
+Chat с большим бюджетом; неограниченных автоматических повторов нет.
+
+Summarizer использует прежнюю конфигурацию Polza AI, отдельную внедряемую функцию
+`summarize_with_model(messages, config)`. Один запуск по порогу — один дополнительный
+вызов модели, отдельно от лимита 3 вызовов Agent. Краткость задана в инструкции;
+превышение `summary-budget` даёт ошибку без сохранения результата. При слишком
+длинной старой истории пересказывается только помещающийся начальный набор целых
+реплик, остаток остаётся за границей для следующих обновлений. Ошибка не меняет
+Summary/границу и не отправляет превышенный контекст Agent. Summary и граница
+возвращаются одним State update. Качество пересказа не гарантируется схемой.
+
+Пример при сохранении одной последней завершённой реплики:
+
+```text
+Полная история: H1 A1 H2 AI(tool_call) ToolMessage A2 H3
+Summary: краткий пересказ H1/A1; граница — ID A1
+Вход Agent: System(правила + Report + каталог Sources + Summary)
+            H2 AI(tool_call) ToolMessage A2 H3
+```
+
+При недостатке бюджета весь блок H2…A2 исключается из входа, а H3 остаётся.
+Полная история и граница Summary при Trim не меняются. Filter/Trim/Summarization
+проверяются отдельно в test_context.py и test_chat_context_graph.py.
+
+### Subgraph и совместимость
+
+Agent Loop — настоящий compiled Subgraph `build_agent_subgraph()`; Parent
+`build_chat_graph()` вызывает его через `run_agent(state, config)`.
+Parent → Subgraph: материалы, Summary, настройки и отобранная `context_history`,
+пустой канал новых `messages` и свежие счётчики. Subgraph → Parent: только новые
+AI/Tool Messages, answer/status и счётчики. Текущий HumanMessage уже сохранён Parent
+и второй раз не возвращается. SDK-клиенты не сохраняются.
+
+`subgraph.compile()` оставляет checkpointer=None: используется Checkpointer
+Parent в режиме **per-invocation**. Namespace привязан к Task run_agent; нового
+Chat Thread нет, отдельная накопительная память между вопросами не создаётся.
+RunnableConfig передаётся в Subgraph и модели. При ошибке Parent продолжает
+незавершённую Task, дочерние Checkpoints сохраняют успешно выполненные шаги.
+Проверены Resume внутри Agent Loop и восстановление в другом процессе без
+повторного HumanMessage/ToolMessage. Неудачный API-вызов может повториться.
+
+Chat version=1 **не мигрируется**: CLI отказывает с инструкцией создать новый Chat
+по тому же completed Research Thread через `--discuss RESEARCH_ID --question ...`.
+Старая история и БД сохраняются. Research version=2 совместима и не меняется.
+
+Subgraph — вложенная организация Graph с собственными Nodes/схемой.
+Parallelization — одновременная работа независимых Tasks, Map-Reduce — раздача
+Jobs Workers и объединение результатов через Reducer. Agent Subgraph сам по себе
+не делает диалог параллельным и не заменяет поиск Send/Fan-in в Research Graph.
+
+### Streaming обсуждения
+
+```powershell
+# Новый Chat с потоковым прогрессом и явными бюджетами:
+$discussion = .\.venv\Scripts\python.exe -m research_assistant --discuss $researchId --question 'Какой главный вывод?' --stream --context-budget 8192 --answer-reserve 512 --summary-threshold 1600 --summary-budget 512 --recent-turns 2 | ConvertFrom-Json
+$chatId = $discussion.chat_thread_id
+$discussion
+
+# Следующий вопрос:
+.\.venv\Scripts\python.exe -m research_assistant --chat $chatId --question 'Уточни по S1' --stream
+
+# Resume после ошибки, без нового вопроса:
+.\.venv\Scripts\python.exe -m research_assistant --chat $chatId --stream
+```
+
+Без `--stream` прежний обычный JSON-режим сохраняется. Streaming использует
+`graph.stream(..., stream_mode=['updates', 'messages'], subgraphs=True)` **вместо**
+Parent invoke, включая Resume. После stream читается сохранённый State того же
+выполнения, второй запуск для результата не делается. Внутренний вызов Subgraph
+остаётся частью того же выполнения Parent.
+
+`updates` преобразуются в «Готовим контекст», «Обновляем Summary», «Читаем источник»,
+«Формируем ответ». `messages` — текстовые AIMessageChunk только узла agent из
+дочернего Namespace; они явно помечены как **предварительные**. Agent может затем
+вызвать Tool и изменить ответ. Summary, Tool arguments/results, reasoning-блоки,
+полные State и метаданные как ответ не печатаются. Прогресс и chunks идут в stderr;
+stdout содержит единственный финальный JSON. При ошибке успешного JSON нет.
+
+Если текстовых chunks нет, выводится сообщение, что token streaming провайдера
+не подтверждён: доступны только события Graph. Если API отклоняет streaming-запрос,
+выполнение завершается ожидаемой ошибкой; можно явно повторить без `--stream`.
+Приложение не разбивает готовый ответ на символы для имитации Streaming.
+Автономные тесты проверяют chunks fake provider и их показ до завершения генерации;
+реальный token streaming вашей Polza-модели без платного запроса не проверен.
+
+| Термин | Применение |
+| --- | --- |
+| Context Management | Явная подготовка ограниченного входа модели из полной истории |
+| Filter | Исключение уже пересказанного префикса по сохранённой границе |
+| Trim | Отбор последних целых реплик по приблизительному бюджету |
+| Summarization | Вызов отдельного Summarizer при достижении порога |
+| Summary | Сохранённый краткий пересказ старого префикса, данные для модели |
+| External Memory | SQLite Checkpoints восстанавливают историю и Summary между процессами |
+| Parent Graph | Хранит общую историю и Summary, готовит контекст и принимает результат |
+| Subgraph | Compiled Agent Loop для одного вопроса, без отдельной межвопросной памяти |
+| Streaming | Получение промежуточных событий и доступных текстовых chunks во время выполнения |
+| updates | События частичных обновлений Nodes, преобразуемые в безопасный прогресс |
+| messages | События сообщений/chunks модели вместе с metadata |
+| Namespace | Путь дочернего выполнения; отличает Agent Subgraph от Parent/Summarizer |
+
+Store, Long-Term Memory, Time Travel, новые Breakpoints и Deployment не добавлены.
+История и Checkpoints не удаляются и могут расти на диске. Наличие реализации
+не означает подтверждённого изучения тем Academy пользователем.
 
 ## Проверки
 
@@ -652,3 +794,11 @@ Fan-in/Report один раз, полноту batches и Worker partial updates 
 процесс восстанавливает предыдущую историю. Research-сервисы запрещены подменами.
 Настоящий ChatOpenAI/bind_tools проверяется только локальным httpx.MockTransport;
 реальных API, сети и оплаты в тестах нет.
+
+`test_context.py`, `test_chat_context_graph.py` и `context_worker.py` проверяют
+Filter/Trim по целым Tool-блокам, пороги и инкрементальное Summary, отсутствие
+дублирования, бюджеты до модели и после Tools, ошибки пересказа, изоляцию и
+восстановление Summary/границы/истории и Subgraph в разных процессах.
+`test_chat_streaming.py` проверяет updates/messages с Namespace, выдачу chunks
+до окончания генерации, сокрытие Summary/Tools/reasoning, единственный JSON,
+обычный режим, Resume и отсутствие второго запуска ради финала.

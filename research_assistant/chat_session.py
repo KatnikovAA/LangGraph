@@ -7,7 +7,9 @@ from uuid import uuid4
 from research_assistant.chat import (
     CHAT_MODE, CHAT_VERSION, ChatError, build_chat_graph, initialize_chat,
     validate_materials,
+    validate_context_state,
 )
+from research_assistant.chat_context import ContextBudget
 from research_assistant.graph import build_graph
 from research_assistant.persistence import inspect_thread, open_saver
 
@@ -31,7 +33,10 @@ def inspect_chat(graph, config: dict, db: str, saver):
     settings = snapshot.values.get('chat_settings')
     if (not isinstance(settings, dict) or settings.get('version') != CHAT_VERSION
             or settings.get('mode') != CHAT_MODE):
-        raise ChatError('Несовместимая версия или режим Chat Thread; Research Thread не является Chat Thread.')
+        research_id = settings.get('research_thread_id') if isinstance(settings, dict) else None
+        hint = f' --discuss {research_id} --question "Ваш вопрос"' if isinstance(research_id, str) else ' --discuss RESEARCH_ID --question "Ваш вопрос"'
+        raise ChatError('Несовместимая версия или режим Chat Thread. Нужна Chat version=2; '
+                        'старые данные сохранены. Создайте новый Chat Thread по тому же исследованию:' + hint)
     research_id = settings.get('research_thread_id')
     if (settings.get('thread_id') != config['configurable']['thread_id']
             or settings.get('checkpoint_db') != db or not isinstance(research_id, str) or not research_id
@@ -41,6 +46,7 @@ def inspect_chat(graph, config: dict, db: str, saver):
     saved = validate_materials({key: snapshot.values.get(key) for key in ('research_thread_id', 'report_markdown', 'sources')})
     if saved != research_materials(saver, research_id, db):
         raise ChatError('Материалы Chat Thread не совпадают со связанным исследованием.')
+    validate_context_state(snapshot.values)
     return snapshot
 
 
@@ -52,9 +58,14 @@ def run_chat(args) -> dict:
     chat_id = args.chat if args.chat is not None else uuid4().hex
     if not chat_id.strip():
         raise ChatError('Укажите непустой Chat Thread ID.')
-    config = {'configurable': {'thread_id': chat_id}, 'max_concurrency': 2, 'recursion_limit': 20}
+    config = {'configurable': {'thread_id': chat_id}, 'max_concurrency': 2, 'recursion_limit': 30}
     with open_saver(db, existing=True) as saver:
-        graph = build_chat_graph(checkpointer=saver)
+        budget_options = {field: getattr(args, flag, None) for field, flag in (
+            ('input_tokens', 'context_budget'), ('answer_reserve', 'answer_reserve'),
+            ('summary_threshold', 'summary_threshold'), ('summary_tokens', 'summary_budget'),
+            ('recent_turns', 'recent_turns'))}
+        graph = build_chat_graph(checkpointer=saver, context_budget=ContextBudget(
+            **{key: value for key, value in budget_options.items() if value is not None}))
         if args.discuss is not None:
             materials = research_materials(saver, args.discuss, db)
             initialize_chat(graph, config, materials, db)
@@ -66,10 +77,15 @@ def run_chat(args) -> dict:
         if snapshot.next:
             if question is not None:
                 raise ChatError('Предыдущий вопрос не завершён. Продолжите через --chat ID без --question; новый вопрос пока не принят.')
-            result = graph.invoke(None, config, durability='sync')
+            graph_input = None
         else:
             if question is None:
                 raise ChatError('Нет незавершённого вопроса. Укажите --question для новой реплики.')
-            result = graph.invoke({'question': question}, config, durability='sync')
+            graph_input = {'question': question}
+        if getattr(args, 'stream', False):
+            from research_assistant.chat_streaming import stream_chat
+            result = stream_chat(graph, graph_input, config)
+        else:
+            result = graph.invoke(graph_input, config, durability='sync')
         return {**result, 'chat_thread_id': chat_id, 'research_thread_id': snapshot.values['research_thread_id'],
                 'checkpoint_db': db}

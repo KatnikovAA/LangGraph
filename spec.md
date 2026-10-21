@@ -8,11 +8,46 @@ Python-приложение принимает техническую тему, 
 
 ## Текущее состояние
 
+Проверка этапа 8: 104 автономных теста, OK; подробности в журнале ниже.
+
+### Этап 8 — Context Management, Subgraphs и Streaming
+
+Статус: завершён; автономно проверен. Актуальная нумерация: Report + Persistence — 5,
+Parallelization — 6, обсуждение отчёта — 7. Parent Chat Graph хранит полную
+историю, Summary и границу по ID; compiled Agent Subgraph обрабатывает один
+вопрос. Контекст ограничивается целыми блоками реплик, включая Tool Messages.
+Бюджеты приблизительные, включают правила, Report, Sources/Tools и резерв ответа.
+Summary обновляется только по порогу, атомарно с границей. Chat version=2:
+старые Chat Threads отклоняются без удаления; Research version=2 не меняется.
+--stream использует updates/messages с Namespace, stderr для прогресса и
+предварительного текста, один финальный JSON в stdout. Без платных API.
+Academy: модуль 2 — Filter/Trim/Summarization/External Memory; модуль 3 —
+Streaming; модуль 4 — Subgraphs. Предпосылки: MessagesState, Tool Calling,
+Agent Loop, Checkpointer. Практика и понимание пользователя не подтверждены.
+
+Бюджеты новых Chat: context-budget=8192, answer-reserve=512,
+summary-threshold=1600, summary-budget=512, recent-turns=2; сохранены в State.
+Оценка: JSON-символы / 3 + надбавка, не tokenizer провайдера. Проверяются
+Report/правила/Sources/Tool schema/Summary/история/текущий вопрос/Tool results
+и резерв ответа; текущий блок не обрезается. Порог проверяет ещё не пересказанные
+завершённые реплики; Summarizer получает прежнее Summary и только новый префикс.
+Последние recent-turns не пересказываются, но Trim может исключить старые
+завершённые блоки из входа при недостатке бюджета. Полная история остаётся.
+Один вызов Summarizer по порогу — дополнительно к лимиту 3 вызовов Agent.
+Ошибка или превышение размера Summary не меняют Summary/границу. После ошибки
+возобновление через --chat ID [--stream], без --question. Per-invocation Subgraph
+наследует Checkpointer через compile() без собственного Thread; успешные шаги
+проверены при Resume, в том числе из нового процесса. Chat v1 отклоняется с
+--discuss по прежнему Research ID, включая незавершённую старую топологию.
+Обычные Research-команды, Plan schema и API-параметры не менялись.
+
 ### Этап 7 — обсуждение отчёта: Chain, Agent и Agent with Memory
 
-Статус: завершён; автономно проверен. Отдельный Chat Graph, не Subgraph. Новый Chat Thread связан
+Статус: завершён; автономно проверен. Результат этапа 7 (далее расширен этапом 8):
+отдельный Chat Graph. Новый Chat Thread связан
 с completed Research Thread версии 2, но не переиспользует его ID/State.
-Chat version=1/mode=report_chat; Research version=2 остаётся неизменной.
+На этапе 7: Chat version=1/mode=report_chat; этап 8 повышает Chat до версии 2.
+Research version=2 остаётся неизменной.
 Multiple Schemas: вопрос на входе, MessagesState и материалы внутри, ответ/статус
 на выходе. Runtime-валидация обязательна. SystemMessage/Report добавляются только
 в контекст модели, в истории сохраняются новые Human/AI/Tool Messages.
@@ -85,7 +120,8 @@ max_results=1; snippet обрезается локально до 500 симво
   на каждый раздел; сохраняемый snippet обрезается до 500 символов после проверки.
   Прежние требования о 3 разделах/80 словах и max_results=3 ниже заменены этим уточнением.
 
-- Последний выполненный этап: 7 — обсуждение отчёта.
+- Последний выполненный этап: 8 — Context Management, Subgraphs и Streaming.
+- Статус этапа 8: завершён; автономные проверки, без реальных платных API.
 - Статус этапа 7: завершён; автономные проверки, без реальных платных API.
 - Статус этапа 6: завершён; автономные проверки пройдены, реальные API не вызывались.
 - Статус этапа 5: завершён; 68 автономных тестов, без реальных API-запросов.
@@ -117,9 +153,9 @@ Studio рассматривается концептуально; установ
 | --- | --- |
 | 0. Подготовка | Окружение и ресурсы — использованы в реализации; обзор настройки с пользователем ещё закрепить |
 | 1. Introduction | Motivation — частично; Simple Graph — разобран; Studio — кратко обсуждён, обзор впереди; Chain — реализован прямой диалоговый путь begin_turn/agent/finish в этапе 7; понимание пользователя ещё закрепить; Router — реализован через Conditional Edges и автономно проверен в этапе 4, практика пользователя ещё не подтверждена; Agent и Agent with Memory — ручной Loop/ToolNode и история Chat Thread реализованы и автономно проверены в этапе 7; практика пользователя ещё не подтверждена; optional Intro to Deployment — впереди |
-| 2. State and Memory | State Schema — базовый разбор TypedDict/Pydantic, углубление впереди; State Reducers — operator.add реализован и автономно проверен в этапе 6, практика пользователя ещё не подтверждена; Multiple Schemas — ChatInput/ChatState/ChatOutput с runtime-проверками реализованы в этапе 7; разбор и практика пользователя ещё не подтверждены; Trim and Filter Messages — впереди; Summarizing Messages and Memory — впереди; Summarizing Messages and External Memory — впереди |
-| 3. UX and Human-in-the-Loop | Streaming — впереди; Breakpoints — впереди; Editing State and Human Feedback — реализованы и проверены автономно в этапе 3, практика пользователя ещё не подтверждена; Dynamic Breakpoints — interrupt реализован и проверен, в этапе 5 добавлен Resume из файлового Checkpoint между процессами; понимание и практика пользователя ещё не подтверждены; Time Travel — впереди |
-| 4. Building Your Assistant | Parallelization и Map-reduce — Send Workers/Fan-in реализованы и автономно проверены в этапе 6, практика пользователя ещё не подтверждена; Sub-graphs — впереди; Research Assistant — Plan, Review, последовательный Web Search, Markdown Report и SQLite Persistence интегрированы и автономно проверены в этапе 5; практика пользователя ещё не подтверждена |
+| 2. State and Memory | State Schema — базовый разбор TypedDict/Pydantic, углубление впереди; State Reducers — operator.add реализован и автономно проверен в этапе 6, практика пользователя ещё не подтверждена; Multiple Schemas — ChatInput/ChatState/ChatOutput с runtime-проверками реализованы в этапе 7; разбор и практика пользователя ещё не подтверждены; Trim and Filter Messages, Summarizing Messages and Memory, Summarizing Messages and External Memory — реализованы и автономно проверены в этапе 8; разбор и практика пользователя ещё не подтверждены |
+| 3. UX and Human-in-the-Loop | Streaming — реализован и автономно проверен в этапе 8; token streaming реального провайдера и практика пользователя не подтверждены; Breakpoints — впереди; Editing State and Human Feedback — реализованы и проверены автономно в этапе 3, практика пользователя ещё не подтверждена; Dynamic Breakpoints — interrupt реализован и проверен, в этапе 5 добавлен Resume из файлового Checkpoint между процессами; понимание и практика пользователя ещё не подтверждены; Time Travel — впереди |
+| 4. Building Your Assistant | Parallelization и Map-reduce — Send Workers/Fan-in реализованы и автономно проверены в этапе 6, практика пользователя ещё не подтверждена; Sub-graphs — compiled Agent Subgraph реализован и автономно проверен в этапе 8; практика пользователя не подтверждена; Research Assistant — Plan, Review, последовательный Web Search, Markdown Report и SQLite Persistence интегрированы и автономно проверены в этапе 5; практика пользователя ещё не подтверждена |
 | 5. Long-Term Memory | Short vs. Long-Term Memory — впереди; LangGraph Store — впереди; Memory Schema + Profile — впереди; Memory Schema + Collection — впереди; Agent with Long-Term Memory — впереди |
 | 6. Deployment | Deployment Concepts — впереди; Creating a Deployment — впереди; Connecting to a Deployment — впереди; Double Texting — впереди; Assistants — впереди |
 
@@ -157,7 +193,8 @@ Studio рассматривается концептуально; установ
 оставшихся тем модулей 1–6 и объединение связанных тем в более крупные этапы.
 Этот раздел заменяет предварительное предложение маршрута из переписки.
 Этап 7 реализован и проверен автономно; подтверждённой практики пользователя пока нет.
-Этапы 8–11 не реализованы и не считаются изученными.
+Этап 8 реализован и проверен автономно; понимание пользователя не подтверждено.
+Этапы 9–11 не реализованы и не считаются изученными.
 Расширение состоит из пяти этапов 7–11; каждый получает один основной промпт реализации
 с последовательными проверяемыми подзадачами, объяснение, шпаргалку вне
 репозитория и блок «Дополнительно: желательно знать».
@@ -187,7 +224,7 @@ Reducers, Checkpointer и существующий готовый Report.
 
 ### Этап 8 — контекст диалога, Subgraphs и Streaming
 
-Статус: запланирован. Предпосылки: этап 7, Messages и Agent Loop.
+Статус: завершён; автономно проверен. Предпосылки: этап 7, Messages и Agent Loop.
 
 - Academy 2: Trim and Filter Messages, Summarizing Messages and Memory,
   Summarizing Messages and External Memory. Существующий SqliteSaver сам по себе
@@ -539,7 +576,7 @@ Academy: State Reducers (модуль 2), Parallelization и Map-reduce (мод�
 | 5 | Markdown-отчёт и SQLite Persistence | Завершён |
 | 6 | Parallelization, Reducers и Map-Reduce | Завершён |
 | 7 | Обсуждение отчёта: Chain, Agent и Agent with Memory | Завершён; автономно проверен |
-| 8 | Контекст диалога, Subgraphs и Streaming | Запланирован; следующий |
+| 8 | Контекст диалога, Subgraphs и Streaming | Завершён; автономно проверен |
 | 9 | Управление выполнением и альтернативные версии исследования | Запланирован |
 | 10 | Long-Term Memory пользователя | Запланирован |
 | 11 | Deployment и подготовка репозитория к использованию | Запланирован |
@@ -809,6 +846,44 @@ Academy: State Reducers (модуль 2), Parallelization и Map-reduce (мод�
 не отмечать выполненными. При изменении требований обновлять основной текст,
 а причину и дату сохранять в журнале.
 
+### 2026-10-21 — этап 8: Context Management, Subgraphs и Streaming
+
+- Изучены новое задание, корневые AGENTS.md/spec.md, фактический код, тесты и
+  зависимости; вложенных AGENTS.md нет. Противоречий с актуальной нумерацией нет.
+  Исходный набор: 88 тестов, 15.842 с, OK. Статус этапа сначала изменён на «в работе».
+- Context7: resolve-library-id LangGraph, затем отдельные query-docs по Memory,
+  Subgraphs и Streaming. Установлены langgraph 1.2.16, langchain-core 1.6.12,
+  langchain-openai 1.7.2, checkpoint-sqlite 3.1.2. Использован поддерживаемый
+  default v1 stream format (namespace, mode, payload), без зависимости от v2 API.
+- Добавлены chat_context.py (бюджеты/Filter/Trim/Summary), chat_errors.py
+  (общая ожидаемая ошибка), chat_streaming.py (безопасное представление событий).
+  chat.py хранит Parent State и отдельный AgentState/compiled Subgraph.
+  chat_session.py проверяет Chat v2 и выбирает invoke/stream; cli.py добавляет
+  --stream и бюджеты новых Chat. README объясняет поток, настройки и совместимость.
+  Research graph.py, persistence.py, Plan schema, .env и зависимости не изменены.
+- Новые test_context.py, test_chat_context_graph.py, test_chat_streaming.py и
+  context_worker.py проверяют 19 групп критериев задания: короткие/длинные диалоги,
+  порог, incremental Summary и отсутствие дублей; целые Tool-блоки и текущий вопрос;
+  полный бюджет и ошибку после Tools; сохранность истории/границы при ошибке;
+  SQLite между процессами и изоляцию; Parent/child mapping, Resume внутри Subgraph;
+  ранние chunks и Namespace, сокрытие Summary/Tools/reasoning, один запуск и JSON;
+  старые завершённые и незавершённые Chat v1; прежние Research и обычный диалог.
+  Прежние chat-тесты адаптированы к передаче RunnableConfig и вложенному ToolNode.
+- Новые проверки сначала выявили отсутствие chat_context/summarizer API.
+  Финал: `.\.venv\Scripts\python.exe -m unittest discover -s tests -q` —
+  104 теста, 21.155 с, OK, код 0. compileall research_assistant tests — код 0;
+  pip check — No broken requirements found; git diff --check — код 0
+  (уведомления LF/CRLF не являются ошибками). Проверено на Windows/Python 3.12.14.
+- Все сервисы автономные: fake models, fake chunks, локальный HTTP MockTransport.
+  Реальный provider token streaming и качество Summary не проверены; платных
+  вызовов нет. Подсчёт приблизительный, не обещает точный лимит Polza-модели.
+  История/Checkpoints остаются полными и растут на диске. API exactly-once не
+  гарантируется; неудачный вызов при явном Resume может расходовать баланс снова.
+- Новых пакетов нет. External Memory — SQLite одного Chat Thread, не Store/LTM.
+  Subgraph организует Agent Loop, а не заменяет Parallelization/Map-Reduce.
+  Карта Academy обновлена только по реализации; понимание пользователя не отмечено.
+  Этапы 9–11 не реализованы. Коммит и push не выполнялись.
+
 ### 2026-10-19 — этап 2, Польза AI
 
 - Прочитаны задание, AGENTS.md, спецификация и исходники. До изменений повторно
@@ -968,4 +1043,12 @@ Academy: State Reducers (модуль 2), Parallelization и Map-reduce (мод�
 - Перед публикацией: unittest discover -s tests -v — 88 тестов, 25.697 с, OK;
   compileall и git diff --check — код 0. Платные API не вызывались.
 - Публикуются отдельный Chat Graph, Agent Loop, память SQLite, тесты и документация.
+- .env, локальные Checkpoints и отчёты исключены из Git.
+
+### 2026-10-21 — публикация этапа 8
+
+- Пользователь разрешил продолжить коммит и push текущих изменений в origin/main.
+- Перед публикацией: unittest discover -s tests -v — 104 теста, 20.734 с, OK;
+  compileall и git diff --check — код 0. Платные API не вызывались.
+- Публикуются Context Management, Agent Subgraph, Streaming, тесты и документация.
 - .env, локальные Checkpoints и отчёты исключены из Git.

@@ -15,7 +15,7 @@ mode, db = sys.argv[1:]
 id_file = Path(db).with_suffix('.chat.txt')
 
 class MemoryModel(FakeModel):
-    def invoke(self, messages):
+    def invoke(self, messages, config=None):
         if mode == 'continue':
             assert [m.content for m in messages[1:]] == ['Первый вопрос', 'Первый ответ', 'Второй вопрос']
         return super().invoke(messages)

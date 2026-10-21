@@ -135,14 +135,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--discuss', metavar='RESEARCH_ID', help='Создать обсуждение завершённого исследования')
     parser.add_argument('--chat', metavar='CHAT_ID', help='Продолжить отдельный диалог по отчёту')
     parser.add_argument('--question', help='Один вопрос по отчёту')
+    parser.add_argument('--stream', action='store_true', help='Прогресс и предварительные фрагменты обсуждения в stderr')
+    parser.add_argument('--context-budget', type=int, help='Приблизительный общий бюджет нового Chat (8192)')
+    parser.add_argument('--answer-reserve', type=int, help='Резерв ответа в бюджете нового Chat (512)')
+    parser.add_argument('--summary-threshold', type=int, help='Порог пересказа истории нового Chat (1600)')
+    parser.add_argument('--summary-budget', type=int, help='Приблизительный размер Summary нового Chat (512)')
+    parser.add_argument('--recent-turns', type=int, help='Число последних завершённых реплик без пересказа (2)')
     args = parser.parse_args(argv)
-    if args.discuss is not None or args.chat is not None or args.question is not None:
+    budget_flags = any(getattr(args, key) is not None for key in (
+        'context_budget', 'answer_reserve', 'summary_threshold', 'summary_budget', 'recent_turns'))
+    if args.discuss is not None or args.chat is not None or args.question is not None or args.stream or budget_flags:
         if ((args.discuss is None and args.chat is None) or (args.discuss is not None and args.chat is not None)
                 or (args.discuss is not None and (not args.discuss.strip() or args.question is None))
                 or args.topic is not None or args.resume is not None or args.review or args.search
-                or args.report or args.pause_after_plan or args.output_dir is not None):
+                or args.report or args.pause_after_plan or args.output_dir is not None
+                or (budget_flags and args.discuss is None)):
             print('Ошибка: используйте --discuss RESEARCH_ID --question TEXT либо --chat CHAT_ID [--question TEXT], '
-                  'с необязательным --checkpoint-db; режимы исследования смешивать нельзя.', file=sys.stderr)
+                  'с необязательными --checkpoint-db/--stream; бюджеты задаются только при --discuss. '
+                  'Режимы исследования смешивать нельзя.', file=sys.stderr)
             return 2
         try:
             result = run_chat(args)

@@ -147,3 +147,45 @@ class ChatSessionTests(unittest.TestCase):
                 self.assertEqual(code, 2)
                 self.assertIn('не совпадают', err)
                 model.bind_tools.assert_not_called()
+
+    def test_old_chat_is_rejected_without_deleting_history(self):
+        from research_assistant.chat import build_chat_graph
+        with tempfile.TemporaryDirectory() as root:
+            db = str(Path(root) / 'db.sqlite')
+            completed_research(db, root)
+            code, out, err = self.run_cli(['--discuss', 'research', '--question', 'Q', '--checkpoint-db', db],
+                                         FakeModel([AIMessage('A')]))
+            self.assertEqual(code, 0, err)
+            config = {'configurable': {'thread_id': json.loads(out)['chat_thread_id']}}
+            with open_saver(db) as saver:
+                graph = build_chat_graph(checkpointer=saver)
+                old = graph.get_state(config).values
+                graph.update_state(config, {'chat_settings': {**old['chat_settings'], 'version': 1}}, as_node='finish')
+            code, out, err = self.run_cli(['--chat', config['configurable']['thread_id'], '--question', 'new',
+                                         '--checkpoint-db', db], Mock())
+            self.assertEqual(code, 2)
+            self.assertEqual(out, '')
+            self.assertIn('--discuss research', err)
+            with open_saver(db) as saver:
+                graph = build_chat_graph(checkpointer=saver)
+                self.assertEqual(len(graph.get_state(config).values['messages']), 2)
+                # Genuine old topology with a pending node absent from the new Parent Graph.
+                from langgraph.graph import StateGraph, MessagesState, START, END
+                from research_assistant.chat import ChatError
+                class LegacyState(MessagesState):
+                    chat_settings: dict
+                def old_agent(state):
+                    raise ChatError('legacy pending failure')
+                builder = StateGraph(LegacyState)
+                builder.add_node('agent', old_agent)
+                builder.add_edge(START, 'agent')
+                builder.add_edge('agent', END)
+                legacy = builder.compile(checkpointer=saver)
+                with self.assertRaises(ChatError):
+                    legacy.invoke({'messages': [HumanMessage('Legacy Q')], 'chat_settings': {
+                        'version': 1, 'mode': 'report_chat', 'research_thread_id': 'research'}},
+                        {'configurable': {'thread_id': 'legacy-pending'}})
+            code, out, err = self.run_cli(['--chat', 'legacy-pending', '--checkpoint-db', db], Mock())
+            self.assertEqual(code, 2)
+            self.assertEqual(out, '')
+            self.assertIn('--discuss research', err)

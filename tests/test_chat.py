@@ -25,7 +25,7 @@ class FakeModel:
         self.tools = tools
         return self
 
-    def invoke(self, messages):
+    def invoke(self, messages, config=None):
         self.contexts.append(list(messages))
         response = next(self.responses)
         if isinstance(response, Exception):
@@ -62,7 +62,8 @@ class ChatGraphTests(unittest.TestCase):
     def test_actual_toolnode_and_matching_tool_message(self):
         model = FakeModel([AIMessage('', tool_calls=[call()]), AIMessage('По источнику S1: фрагмент')])
         graph, config = self.start(model)
-        self.assertIsInstance(graph.nodes['tools'].bound, ToolNode)
+        from research_assistant.chat import build_agent_subgraph
+        self.assertIsInstance(build_agent_subgraph().nodes['tools'].bound, ToolNode)
         result = graph.invoke({'question': 'Что в S1?'}, config)
         self.assertEqual(result['status'], 'answered')
         tool_messages = [m for m in graph.get_state(config).values['messages'] if isinstance(m, ToolMessage)]
