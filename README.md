@@ -16,6 +16,80 @@ Tavily запрашивается с `max_results=1` на раздел; кажд
 В режиме `--report` snippets передаются модели; сокращение уменьшает входной
 контекст Report. В прежних режимах дополнительного LLM-вызова нет.
 
+## Локальная Studio: учебный Research Graph
+
+Современная LangSmith Studio работает в браузере; отдельное desktop-приложение
+и Docker для `langgraph dev` не нужны. Это дополнительная практика Academy 1/3,
+не подтверждение изучения всего этапа 9. Chat Graph пока не зарегистрирован.
+
+Из корня проекта, один раз (отдельное окружение сохраняет зависимости CLI):
+
+```powershell
+.\.venv\Scripts\python.exe -m venv .venv-studio
+.\.venv-studio\Scripts\python.exe -m pip install --no-compile -e ".[studio]"
+```
+
+Запуск:
+
+```powershell
+$env:LANGSMITH_TRACING = 'false'
+$env:LANGCHAIN_TRACING_V2 = 'false'
+$env:LOG_COLOR = 'false'
+$env:LANGGRAPH_CLI_NO_ANALYTICS = '1'
+.\.venv-studio\Scripts\langgraph.exe dev --no-browser
+```
+
+Оставьте терминал работающим. Откройте Studio по ссылке из его вывода:
+`https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:2024`.
+Если браузер запрашивает доступ к локальной сети, разрешите его для Studio.
+Если встроенная вкладка остаётся пустой, откройте эту же ссылку в обычном
+Chrome/Edge. При Failed to fetch проверьте разрешение сайта Local network access:
+[официальная диагностика](https://docs.langchain.com/langsmith/troubleshooting-studio).
+Пустой экран сам по себе не доказывает конкретную причину ошибки.
+Остановка сервера: Ctrl+C. Сервер слушает только 127.0.0.1; tunnel не включён.
+
+Проверки без реальных API:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -q
+# Только при уже запущенном локальном сервере; создаёт три учебных Thread:
+.\.venv-studio\Scripts\python.exe tests/studio_server_smoke.py
+```
+
+`langgraph.json` регистрирует `research` из `research_assistant/studio.py`.
+Его `demo_plan(topic)`, `demo_search(query)` и `demo_report(topic, plan, sources)`
+возвращают локальные учебные данные; модель, Tavily и URL источника не вызываются.
+Создаётся полный Research Graph с прежними Nodes и настоящим `review_plan/interrupt`.
+Report явно помечен как подмена и сохраняется в `.research_assistant/studio/reports/`.
+
+Persistence разделена: `build_graph(..., persistence='server')` компилирует Graph
+без Checkpointer; Agent Server предоставляет собственный. `langgraph dev` хранит
+локальные данные в `.langgraph_api/`. Это не SQLite CLI, не миграция его Threads
+и не production Deployment. Прежняя `.research_assistant/checkpoints.sqlite`
+не открывается серверной точкой входа. В CLI режим по умолчанию `caller`:
+Review по-прежнему требует явно переданный Saver.
+
+Первый сценарий выполняйте по одному шагу с сопровождением: открыть Graph,
+создать новый Thread с `{"topic":"Архитектура LangGraph"}`, посмотреть State
+до/после `generate_plan`, затем остановку `review_plan`. Для Resume нужен JSON
+`{"action":"approve"}`; отмена — `{"action":"cancel"}`; правка —
+`{"action":"edit","plan":{"title":"Новый план","sections":[{"title":"State","questions":["Как меняется State?"]}]}}`.
+Это значение Resume, а не новый input Graph. Для нового исследования создавайте
+новый Thread: `search_batches` использует add-Reducer. На первом знакомстве
+используйте Review для правки; Replay/Fork в Studio и файловые эффекты требуют
+отдельного разбора. CLI-команды ветвления к серверным Threads не применяются.
+
+Tracing выключен в `langgraph.json` и команде запуска. Корневая `.env` не загружается
+серверной конфигурацией; ключи API для подмен не нужны. Studio — интерфейс просмотра
+Graph и State; LangSmith tracing — отдельная отправка трасс в облачный проект.
+Если позже понадобится tracing, сначала отдельно согласуйте его включение,
+данные для отправки и проект, затем настройте `LANGSMITH_API_KEY`,
+`LANGSMITH_PROJECT`, `LANGSMITH_TRACING=true`. Сейчас этого делать не требуется.
+
+Документация: [Studio](https://docs.langchain.com/langsmith/quick-start-studio),
+[CLI](https://docs.langchain.com/langsmith/cli),
+[серверная Persistence](https://docs.langchain.com/oss/python/langgraph/checkpointers).
+
 ## Установка в Windows PowerShell
 
 Требуется Python 3.11 или новее (фактически проверяется Python 3.12).

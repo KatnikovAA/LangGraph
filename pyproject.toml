@@ -20,5 +20,8 @@ dependencies = [
 [project.scripts]
 research-assistant = "research_assistant.cli:main"
 
+[project.optional-dependencies]
+studio = ["langgraph-cli[inmem]>=0.4,<1.0"]
+
 [tool.setuptools.packages.find]
 include = ["research_assistant*"]

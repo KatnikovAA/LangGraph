@@ -1,0 +1,12 @@
+{
+  "$schema": "https://langgra.ph/schema.json",
+  "dependencies": ["."],
+  "graphs": {
+    "research": "./research_assistant/studio.py:graph"
+  },
+  "env": {
+    "LANGSMITH_TRACING": "false",
+    "LANGCHAIN_TRACING_V2": "false",
+    "LOG_COLOR": "false"
+  }
+}

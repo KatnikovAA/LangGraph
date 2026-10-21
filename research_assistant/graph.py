@@ -150,16 +150,21 @@ def build_graph(
     report: bool = False, output_dir: str | None = None,
     report_generator: Callable | None = None,
     break_before_search: bool = False,
+    persistence: Literal['caller', 'server'] = 'caller',
 ):
-    """Compile the selected workflow; persistent callers also supply workflow settings."""
+    """Compile workflow; CLI owns its saver, Agent Server injects its own persistence."""
+    if persistence not in ('caller', 'server'):
+        raise ValueError('Неизвестный режим Persistence.')
+    if persistence == 'server' and checkpointer is not None:
+        raise ValueError('Режим server не допускает собственный checkpointer.')
     if search and not review:
         raise ValueError("Режим search требует review и утверждение плана.")
     if report and not (review and search):
         raise ValueError("Режим report требует review и search.")
-    if break_before_search and not (report and checkpointer is not None):
+    if break_before_search and not (report and (checkpointer is not None or persistence == 'server')):
         raise ValueError('Static Breakpoint требует полного Research Workflow и Checkpointer.')
     resolved_output = str(Path(output_dir or 'reports').resolve())
-    if review and checkpointer is None:
+    if review and checkpointer is None and persistence != 'server':
         raise ValueError("Режим review требует checkpointer для паузы и продолжения.")
     builder = StateGraph(SearchState if search else RequestState, input_schema=TopicInput)
     builder.add_node("validate_topic", validate_topic)

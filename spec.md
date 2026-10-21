@@ -8,6 +8,20 @@ Python-приложение принимает техническую тему, 
 
 ## Текущее состояние
 
+### Дополнительная практика Studio перед разбором этапа 9
+
+Статус: серверная настройка проверена; практика интерфейса в работе.
+Academy 1: Studio; Academy 3: State inspection и существующий
+Human-in-the-Loop. Предпосылки: State, Nodes, Checkpoints, Thread ID, interrupt.
+Пользователь согласовал локальный Agent Server и браузерную Studio только для
+Research Graph. Plan/Search/Report подменяются локальными функциями, платные API
+не вызываются. Tracing выключен; настройка tracing обсуждается отдельно.
+Persistence сервера отделяется от SqliteSaver CLI, данные не мигрируются и не удаляются.
+Chat подключается после первого успешного пользовательского сценария Research.
+Автономная реализация этапа 9 уже существует; эта практика не подтверждает изучение
+всего этапа 9 и не меняет его критерии понимания. Прежний запрет commit/push
+снят актуальным разрешением пользователя в чате публикации 2026-10-21.
+
 ### Этап 9 — Breakpoints, Editing State и Time Travel
 
 Статус: завершён; автономно проверен. Academy 3: Breakpoints, Editing State and Human Feedback,
@@ -608,6 +622,50 @@ Academy: State Reducers (модуль 2), Parallelization и Map-reduce (мод�
 
 ## Журнал выполнения
 
+### 2026-10-21 — дополнительная практика Studio: подготовка
+
+- Прочитаны AGENTS.md, spec.md, Research Graph, CLI, Schemas, Reporting,
+  Persistence и связанные тесты. Context7: LangGraph/LangSmith resolve-library-id,
+  query-docs по Studio v2, local Agent Server, серверному Checkpointer и Resume.
+- Пользователь согласовал минимальный серверный вход. Добавлены studio.py и
+  langgraph.json с единственным Graph research, локальными подменами Plan/Search/Report
+  и LANGSMITH_TRACING=false, LANGCHAIN_TRACING_V2=false. Ключи не нужны,
+  корневая .env не указана в серверной конфигурации. Chat не подключён.
+- build_graph получил явный persistence='server': собственный Saver запрещён,
+  compile получает None для серверного внедрения. По умолчанию caller сохраняет
+  прежние проверки CLI. SqliteSaver и старые Threads не мигрируются и не удаляются.
+- Отдельная .venv-studio исключена из Git; новый optional extra studio содержит
+  langgraph-cli[inmem]. .venv CLI не обновляется. .langgraph_api исключена из Git;
+  Report сервера пишется в .research_assistant/studio/reports.
+- Новые тесты сначала подтвердили отсутствие серверного входа/параметра.
+  После реализации: unittest discover -s tests -q в .venv — 112 тестов, 27.476 с,
+  OK; compileall, pip check и git diff --check — код 0 (уведомления CRLF).
+  tests/studio_server_smoke.py подготовлен для отдельной проверки настоящего HTTP
+  сервера: три Thread, Pause/State и approve/edit/cancel. Результат запуска ниже.
+- Браузерная Studio открыта; до запуска сервера ожидаемо показывает Failed to fetch.
+  Пользовательская практика и знакомство с интерфейсом ещё не подтверждены.
+  Статус изучения этапа 9 не повышается. Commit/push не выполняются.
+- Установка в .venv-studio: pip install --no-compile -e ".[studio]", код 0;
+  предварительная попытка без --no-compile прервана на медленной компиляции SDK.
+  CLI 0.4.37, Agent Server 0.16.2, runtime-inmem 0.36.2, LangGraph 1.2.16.
+  pip check отдельного окружения — OK; 2 новых асинхронных теста — OK.
+- Первая попытка запуска выявила ошибку structlog/Windows: цветные логи требуют
+  colorama. По traceback и исходникам пакета отключён LOG_COLOR (без нового пакета).
+  Добавлен LOG_COLOR=false в langgraph.json и команду README.
+- Сервер запущен: langgraph dev --no-browser --no-reload, 127.0.0.1:2024;
+  LANGSMITH_TRACING=false, LANGCHAIN_TRACING_V2=false, LOG_COLOR=false,
+  LANGGRAPH_CLI_NO_ANALYTICS=1. /ok доступен из Python и встроенного браузера.
+  /info: версия 0.16.2, flags.langsmith=false, CORS разрешает Studio.
+- tests/studio_server_smoke.py выполнен через .venv-studio: три настоящих HTTP
+  Thread, planned -> review_plan -> completed для approve/edit и cancelled для cancel;
+  проверены State, пауза, изменённый Plan и отсутствие следующих Nodes. Код 0.
+- Ограничение UI: встроенный браузер открывает Studio, но после запуска сервера
+  остаётся пустой экран; console содержит Forbidden. Причина не доказана;
+  успешный /ok не доказывает доступ HTTPS Studio к localhost. Context7 по
+  troubleshooting-studio описывает Local network access в Chrome. Следующее
+  пользовательское действие: открыть документированную ссылку Studio в обычном
+  Chrome/Edge. Graph в UI, пользовательский запрос и ручной Resume пока не подтверждены.
+
 ### 2026-10-21 — этап 9: Breakpoints, Editing State и Time Travel
 
 - Изучены задание, AGENTS/spec, Research/Chat Graph, CLI, Reporting, Persistence,
@@ -1136,3 +1194,11 @@ Academy: State Reducers (модуль 2), Parallelization и Map-reduce (мод�
   compileall и git diff --check — код 0. Реальные API не вызывались.
 - Публикуются Breakpoints, History/Inspection, Replay/Fork, тесты и документация.
 - .env, локальные Checkpoints и отчёты исключены из Git.
+
+### 2026-10-21 — публикация локальной настройки Studio
+
+- Пользователь поручил продолжить коммит и push; прежний запрет публикации снят.
+- Перед публикацией: unittest discover -s tests -v — 112 тестов, 32.258 с, OK;
+  compileall и git diff --check — код 0. Платные API не вызывались.
+- Публикуются конфигурация локального сервера, offline Research Graph, тесты и документация.
+- Практика интерфейса остаётся в работе. .env, окружения, Checkpoints и отчёты исключены из Git.
