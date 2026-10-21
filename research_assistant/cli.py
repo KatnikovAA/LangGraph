@@ -16,6 +16,8 @@ from research_assistant.schemas import ResearchPlan
 from research_assistant.search import SearchError
 from research_assistant.reporting import ReportError
 from research_assistant.persistence import PersistenceError, open_saver, workflow_settings, inspect_thread
+from research_assistant.chat import ChatError
+from research_assistant.chat_session import run_chat
 
 
 def show_plan(plan: dict) -> None:
@@ -130,7 +132,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--output-dir', help='Каталог отчётов (по умолчанию reports/)')
     parser.add_argument('--pause-after-plan', action='store_true', help='Сохранить Pause без запроса решения')
     parser.add_argument('--resume', metavar='THREAD_ID', help='Продолжить сохранённый полный режим')
+    parser.add_argument('--discuss', metavar='RESEARCH_ID', help='Создать обсуждение завершённого исследования')
+    parser.add_argument('--chat', metavar='CHAT_ID', help='Продолжить отдельный диалог по отчёту')
+    parser.add_argument('--question', help='Один вопрос по отчёту')
     args = parser.parse_args(argv)
+    if args.discuss is not None or args.chat is not None or args.question is not None:
+        if ((args.discuss is None and args.chat is None) or (args.discuss is not None and args.chat is not None)
+                or (args.discuss is not None and (not args.discuss.strip() or args.question is None))
+                or args.topic is not None or args.resume is not None or args.review or args.search
+                or args.report or args.pause_after_plan or args.output_dir is not None):
+            print('Ошибка: используйте --discuss RESEARCH_ID --question TEXT либо --chat CHAT_ID [--question TEXT], '
+                  'с необязательным --checkpoint-db; режимы исследования смешивать нельзя.', file=sys.stderr)
+            return 2
+        try:
+            result = run_chat(args)
+        except (ChatError, PersistenceError, ConfigurationError) as error:
+            print(f'Ошибка: {error}', file=sys.stderr)
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
     if args.resume is not None:
         if not args.resume.strip() or args.topic is not None or args.review or args.search or args.report or args.pause_after_plan or args.output_dir is not None:
             print('Ошибка: --resume допускает только THREAD_ID и --checkpoint-db; тему, режим и output-путь менять нельзя.', file=sys.stderr)

@@ -464,7 +464,7 @@ Pending Writes; при явном `--resume` через новый saver/Graph �
 повторно, а failed Task запускается заново. Fan-in не получает двойные batches.
 API-вызов failed Task может расходовать баланс повторно; exactly-once нет.
 
-**WORKFLOW_VERSION теперь 2.** Структура Nodes/State изменилась. Threads версии 1,
+**WORKFLOW_VERSION исследования — 2.** Структура Nodes/State изменилась. Research Threads версии 1,
 включая сохранённые ранее Pause, отклоняются до любых API-вызовов; автоматической
 миграции нет. Старая БД и файлы не удаляются. Для нового Workflow создайте новый
 Thread обычной командой с `--topic`; версия 2 может использовать тот же SQLite-файл.
@@ -474,6 +474,138 @@ Thread обычной командой с `--topic`; версия 2 может �
 `build_graph` в graph.py, затем config в cli.py и совместимость в persistence.py.
 Новых устанавливаемых зависимостей нет: Send — из LangGraph, Annotated — из typing,
 operator.add — из стандартной библиотеки Python.
+
+## Обсуждение готового Report
+
+Обсуждение — отдельный Chat Graph в том же приложении. Его Chat Thread имеет
+собственный ID и явную ссылку на завершённый Research Thread. Для создания нужны
+совместимый Research Checkpoint версии 2, `status="completed"`, непустой сохранённый
+report_markdown и корректные sources. Контекст берётся из Checkpoint, Markdown-файл
+заново не читается; планирование, поиск, Report Generation и запись файла не запускаются.
+
+Настройки Польза AI прежние: POLZA_API_KEY, POLZA_MODEL, POLZA_BASE_URL.
+Для обсуждения модель должна поддерживать **Tool Calling**. Поддержка JSON Schema
+сама по себе этого не доказывает. Совместимость вашей конкретной модели пока
+не проверена реальным запросом; выполнены только fake model и локальные HTTP-тесты.
+Новых зависимостей нет.
+
+Создать обсуждение и задать первый вопрос (подставьте Research Thread ID):
+
+```powershell
+Set-Location 'F:\AI Agent\LangGraph'
+$researchId = 'ВСТАВЬТЕ_COMPLETED_RESEARCH_THREAD_ID'
+$discussion = .\.venv\Scripts\python.exe -m research_assistant --discuss $researchId --question 'Какой главный вывод отчёта?' | ConvertFrom-Json
+$discussion
+$chatId = $discussion.chat_thread_id
+```
+
+Следующий вопрос, в том числе после перезапуска процесса:
+
+```powershell
+# После перезапуска терминала восстановите переменную из сохранённого ID:
+# $chatId = 'ВСТАВЬТЕ_CHAT_THREAD_ID'
+.\.venv\Scripts\python.exe -m research_assistant --chat $chatId --question 'Что именно сказано в источнике S1?'
+```
+
+Для другой БД добавьте к каждой команде `--checkpoint-db 'C:\полный\путь\checkpoints.sqlite'`.
+Режимы `--discuss`/`--chat` нельзя смешивать с `--topic`, `--review`, `--search`,
+`--report`, `--resume`, `--pause-after-plan` или `--output-dir`. Для диалога
+интерактивный stdin не нужен: одна команда — один вопрос, stdout — только JSON,
+ID и диагностические сообщения — stderr. Например:
+
+```json
+{
+  "answer": "Краткий ответ по отчёту.",
+  "status": "answered",
+  "chat_thread_id": "новый-ID-диалога",
+  "research_thread_id": "ID-исследования",
+  "checkpoint_db": "F:\\AI Agent\\LangGraph\\.research_assistant\\checkpoints.sqlite"
+}
+```
+
+### Ручной Agent Loop и локальный Tool
+
+```text
+START → begin_turn → agent → Router
+                         ├─ нет tool_calls → finish → END
+                         ├─ есть tool_calls → ToolNode(get_source) → agent
+                         └─ достигнут лимит → stop → END
+```
+
+`get_source(source_id)` возвращает сохранённые title, URL и snippet. ID S1, S2
+назначаются по тому же порядку sources, что и в Report. Материалы получает
+ToolNode через скрытый InjectedState; модель управляет только source_id, а не
+путём к файлу или Research Thread. Tool не делает сетевых запросов и не читает
+полную статью. Неизвестный ID возвращает JSON с `error="unknown_source_id"`.
+Неверный Tool/аргументы дают ToolMessage с ошибкой, а не произвольное выполнение.
+Результат Tool возвращается модели и сохраняется с соответствующим tool_call_id.
+
+На один вопрос разрешено максимум **3 вызова модели и 3 выполнения Tools**.
+Если очередные Tool Calls превышают бюджет либо модель снова требует Tools
+на последнем шаге, `stop` создаёт ToolMessage «вызов не выполнен» для каждого
+ожидающего ID и завершающий AIMessage; status становится `limited`.
+Частично выполнить группу вызовов и оставить другие незавершёнными нельзя.
+Это предел Agent Loop, а не лимит размера Plan или выходных токенов модели.
+Следующий вопрос получает свежие счётчики и сохранённую историю.
+
+### История, схемы и восстановление
+
+- `ChatInput` — новый question; `ChatState(MessagesState)` — внутренняя история,
+  материалы, привязка и счётчики; `ChatOutput` — answer/status. Это Multiple Schemas;
+  дополнительно код проверяет вопрос, материалы, сообщения, ID и привязку во время выполнения.
+- `MessagesState` использует add_messages: новые сообщения добавляются, сообщения
+  с тем же ID обновляются. begin_turn возвращает только один новый HumanMessage;
+  agent и ToolNode — только свои новые сообщения. Предыдущую историю CLI не пересылает.
+- Контекст собирается явно в model_context: один SystemMessage с правилами,
+  Report и компактным каталогом ID + сохранённые Messages. SystemMessage и копия
+  Report не добавляются к messages. Checkpointer сохраняет историю, но не решает,
+  что получает модель: это делает код построения контекста.
+- Chat имеет отдельные `mode="report_chat"`, `version=1`, Research остаётся
+  `mode="review_search_report"`, `version=2`. Совместимые Research Checkpoints
+  читаются без миграции и изменений. Версия, режим, ID, база, привязка и совпадение
+  материалов со связанным Research проверяются перед продолжением.
+- Статусы Chat: `ready` после создания, `answering` во время вопроса,
+  `answered` при обычном завершении, `limited` при остановке по бюджету.
+  Ошибка модели даёт код 2 и понятное сообщение без ответа JSON и без секретов.
+
+После ошибки незавершённый вопрос можно явно повторить:
+
+```powershell
+.\.venv\Scripts\python.exe -m research_assistant --chat $chatId
+```
+
+Используется `invoke(None, config)` с новым SqliteSaver и тем же Chat ID.
+Новый HumanMessage не добавляется. Пока предыдущий вопрос не завершён,
+передать другой `--question` нельзя. Без незавершённого вопроса опция --question
+обязательна. Если ошибка возникла при создании, Chat ID доступен в stderr.
+Автоматического повтора нет. Явный повтор может расходовать баланс снова;
+exactly-once API-вызовов не гарантируется.
+
+Ответы запрашиваются краткими на русском (ориентир до 100 слов), но это инструкция,
+а не жёсткий лимит. Вся история передаётся модели; без Trim/Summary она растёт,
+увеличивая контекст и стоимость. Память здесь — Short-Term Memory одного Thread
+в SQLite, не LangGraph Store и не Long-Term Memory. Чаты изолированы по ID.
+Snippets остаются фрагментами Search API; их наличие не подтверждает чтение страниц
+и не гарантирует фактическую правильность ответа. Нового Web Search в диалоге нет.
+
+### Термины и код
+
+| Термин | Значение и применение |
+| --- | --- |
+| Chain | Заданная последовательность шагов; прямой путь begin_turn → agent → finish |
+| Router | Выбирает переход; route_agent проверяет tool_calls и бюджет |
+| Agent | Модель выбирает следующий Tool; agent использует bind_tools([get_source]) |
+| Agent with Memory | Этот Agent получает историю своего Chat Thread после перезапуска |
+| Tool Calling | Структурированный запрос модели с name/args/id, не разбор произвольного текста |
+| ToolNode | Настоящий langgraph.prebuilt.ToolNode выполняет get_source и создаёт ToolMessage |
+| Agent Loop | Повтор agent → tools → agent с ограничением числа вызовов |
+| MessagesState | Основа ChatState с каналом messages и встроенным Reducer |
+| add_messages | Reducer истории: добавление сообщений и обновление по ID |
+| Multiple Schemas | Раздельные вход, внутренний State и выход Graph |
+
+Порядок чтения: `chat.py` (схемы, get_source, контекст, Nodes и Router) →
+`chat_session.py` (привязка, SQLite, создание и продолжение) → `cli.py` (флаги).
+Исходный Research Graph в graph.py не стал Subgraph и не изменён этим этапом.
 
 ## Проверки
 
@@ -512,3 +644,11 @@ Fan-in/Report один раз, полноту batches и Worker partial updates 
 успешная Task не повторяется, failed повторяется, дубликатов нет. Старые Threads
 версии 1 проверяются на отказ CLI без API и удаления базы. Проверки многосекционных
 планов используют искусственный Plan, а не меняют компактный System Prompt.
+
+`test_chat.py`, `test_chat_session.py`, `test_chat_provider.py` проверяют прямой
+ответ, фактический ToolNode/ToolMessage, второй вопрос без дублей, лимиты,
+изоляцию, валидацию ID/режимов/материалов и ошибки без раскрытия секретов.
+`chat_worker.py` используется в двух subprocess с одним SQLite-файлом: следующий
+процесс восстанавливает предыдущую историю. Research-сервисы запрещены подменами.
+Настоящий ChatOpenAI/bind_tools проверяется только локальным httpx.MockTransport;
+реальных API, сети и оплаты в тестах нет.
