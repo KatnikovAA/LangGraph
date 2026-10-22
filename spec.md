@@ -50,3 +50,15 @@
 - Автономные тесты не вызывают платные API; HTTP/restart/checkout opt-in.
 - Аутентификация, публичный Deployment и exactly-once не заявляются.
 - Качество провайдеров оценивается отдельно от автономных проверок.
+
+## Continuous Integration
+
+- GitHub Actions: push в main, Pull Request и ручной запуск.
+- Windows / Python 3.12, зависимости из requirements-web.lock и Web extra.
+- Проверки: политика секретов, pip check, compileall и автономный unittest.
+- Ключи провайдеров не передаются в CI, tracing выключен, режим Demo.
+- HTTP/restart/checkout проверки с отдельными серверами остаются opt-in.
+- Workflow имеет только contents: read; Actions закреплены по commit SHA.
+- Проверка индекса отклоняет локальные .env, приватные ключи, известные форматы
+  токенов и заполненные API-ключи в шаблонах. Она не гарантирует обнаружение
+  любого секрета и не заменяет проверку перед публикацией.

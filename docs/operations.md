@@ -45,6 +45,18 @@ History, Inspection, Replay/Fork, checkpoint pin и память доступн�
 
 ## Проверки
 
+GitHub Actions автоматически проверяет push в main и Pull Request. Ручной запуск:
+GitHub → Actions → CI → Run workflow. Конфигурация: `.github/workflows/ci.yml`.
+Основной набор выполняется на Windows / Python 3.12 без provider Secrets.
+Отдельные HTTP/restart/checkout сценарии по умолчанию пропущены.
+
+Перед коммитом можно выполнить политику безопасности локально:
+`python scripts/check_repository_security.py`. Скрипт читает Git index; новые
+изменения должны быть добавлены через git add. Он не читает локальный .env,
+не печатает значения и не является исчерпывающим сканером секретов.
+Реальные ключи храните только в локальном .env или серверном окружении;
+не добавляйте их в GitHub Secrets для этого Workflow — они не требуются.
+
 ```powershell
 .\.venv-web\Scripts\python.exe -m unittest discover -s tests -v
 .\.venv-web\Scripts\python.exe -m compileall -q research_assistant tests scripts

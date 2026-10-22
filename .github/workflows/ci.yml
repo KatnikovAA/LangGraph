@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Python 3.12 / Windows
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      PYTHONUTF8: '1'
+      RA_WEB_MODE: demo
+      LANGSMITH_TRACING: 'false'
+      LANGCHAIN_TRACING_V2: 'false'
+      POLZA_API_KEY: ''
+      TAVILY_API_KEY: ''
+      OPENAI_API_KEY: ''
+      LANGSMITH_API_KEY: ''
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            requirements-web.lock
+            pyproject.toml
+
+      - name: Check repository security policy
+        run: python scripts/check_repository_security.py
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements-web.lock -e ".[web]"
+
+      - name: Check dependency compatibility
+        run: python -m pip check
+
+      - name: Check Python syntax
+        run: python -m compileall -q research_assistant tests scripts
+
+      - name: Run autonomous tests
+        run: python -m unittest discover -s tests -v

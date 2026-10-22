@@ -10,6 +10,7 @@
 ![LangGraph](https://img.shields.io/badge/LangGraph-Stateful_Workflows-1C3C3C?style=flat-square)
 ![SQLite](https://img.shields.io/badge/Persistence-SQLite-003B57?style=flat-square&logo=sqlite&logoColor=white)
 ![Interface](https://img.shields.io/badge/Interface-Web_%2B_CLI-2563EB?style=flat-square)
+[![CI](https://github.com/KatnikovAA/LangGraph/actions/workflows/ci.yml/badge.svg)](https://github.com/KatnikovAA/LangGraph/actions/workflows/ci.yml)
 
 [Возможности](#возможности) · [Архитектура](#архитектура) · [Запуск](#запуск) · [Документация](#документация)
 
@@ -153,6 +154,8 @@ tests/                       # Автономные и opt-in интеграци
 ```
 
 Основной набор использует подмены модели и поиска. HTTP, restart и clean-checkout проверки включаются отдельно в изолированном окружении; команды и предусловия — в [документации](docs/operations.md#проверки).
+
+GitHub Actions выполняет эти проверки при push в `main`, в Pull Request и по ручному запуску. CI использует Windows / Python 3.12, не получает ключи провайдеров и дополнительно проверяет состав отслеживаемых файлов на секреты.
 
 ## Границы применения
 
