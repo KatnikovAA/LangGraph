@@ -93,8 +93,13 @@ class AgentState(MessagesState):
     status: Literal['answering', 'answered', 'limited']
 
 
-def validate_materials(data: dict) -> dict:
+def validate_materials(data: dict, *, allow_empty: bool = False) -> dict:
     try:
+        if allow_empty:
+            # Only server-validated Interview bindings opt in. Research keeps min_length=1.
+            class InterviewChatMaterials(ChatMaterials):
+                sources: list[Source]
+            return InterviewChatMaterials.model_validate(data).model_dump(mode='json')
         return ChatMaterials.model_validate(data).model_dump(mode='json')
     except ValidationError as error:
         raise ChatError('Обсуждению нужен завершённый непустой Report и корректные сохранённые источники.') from error
@@ -139,7 +144,8 @@ def begin_turn(state: ChatState) -> dict:
     question = state.get('incoming_question') if server else state.get('question')
     if not isinstance(question, str) or not question.strip():
         raise ChatError('Вопрос не должен быть пустым.')
-    validate_materials({key: state[key] for key in ('research_thread_id', 'report_markdown', 'sources')})
+    validate_materials({key: state[key] for key in ('research_thread_id', 'report_markdown', 'sources')},
+                      allow_empty=server and state.get('chat_settings', {}).get('material_mode') == 'interview')
     validate_history(state.get('messages', []))
     return {'question': question, 'messages': [HumanMessage(content=question.strip())], 'model_calls': 0,
             'tool_calls_used': 0, 'stop_requested': False, 'answer': '', 'status': 'answering'}

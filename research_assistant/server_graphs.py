@@ -28,6 +28,16 @@ def create_chat_graph(config: RunnableConfig):
         summarizer=demo_summary if settings.mode == 'demo' else None)
 
 
+def create_interview_graph(config: RunnableConfig):
+    from research_assistant.interview.graph import build_interview_graph
+    settings = load_server_settings()
+    options = {}
+    if settings.mode == 'demo':
+        from research_assistant.interview.demo import demo_services
+        options = demo_services()
+    return build_interview_graph(output_dir=str(settings.reports), **options)
+
+
 class ConcurrencyState(TypedDict):
     value: str
 

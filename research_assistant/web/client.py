@@ -25,11 +25,16 @@ def public_event(event, data):
 
 class EventProjection:
     """Native SDK messages/partial are cumulative; emit deltas only for agent IDs."""
-    def __init__(self):
+    def __init__(self, run_id=''):
         self.allowed = set()
         self.text = {}
+        self.run_id = run_id
 
     def accept(self, event, data):
+        if event.split('|')[0] == 'custom':
+            from research_assistant.interview.progress import project_progress
+            projected = project_progress(data, self.run_id)
+            return ('interview-progress', projected) if projected else None
         if event == 'messages/metadata' and isinstance(data, dict):
             for identifier, item in data.items():
                 if item.get('metadata', {}).get('langgraph_node') == 'agent':

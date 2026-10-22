@@ -57,6 +57,29 @@ API/SDK, Assistants/Double Texting, ограничения и вопросы н�
 Архитектура: `docs/superpowers/specs/2026-10-21-web-application-design.md`;
 план: `docs/superpowers/plans/2026-10-21-web-application.md`.
 
+## Этап 12 — «С интервью»
+
+В существующей форме выберите «С интервью»: тема и уточнение → два раунда
+Analyst/Expert → Report → обсуждение с точным Checkpoint pin. Панель Nodes показывает
+реальные начало/завершение/ошибку, раунд и длительность. Reload не создаёт новый Run;
+после ошибки доступен Resume. Источники имеют стабильные S1/S2 между раундами.
+Штатный бюджет: до 5 model calls и 2 поисков, без скрытых retries.
+Пустой поиск отражается как ограничение, без вымышленных источников.
+
+```powershell
+.\research_assistant\interview\start-demo.ps1
+# отдельная Demo: UI http://127.0.0.1:8082, Agent http://127.0.0.1:2027
+# при занятых портах: -AgentPort 2028 -WebPort 8083
+```
+
+Новый код собран в **[research_assistant/interview](research_assistant/interview/README.md)**;
+тесты — `tests/interview/`. Launcher использует отдельный data-root и существующие
+entrypoints, не перенастраивая действующий Live. Новых dependencies нет.
+Token streaming интервью пока не включён: доступны настоящие Progress Events
+и готовые сообщения; Demo не имитирует provider chunks. Live использует текущие
+Polza/Tavily, без разрешения платные вызовы не выполнялись. Этап 13 не реализован.
+**[Команды, путь данных, приёмка и ограничения](docs/interview-walkthrough.md)**.
+
 ## Прежний CLI
 
 Python-приложение принимает техническую тему и составляет структурированный план

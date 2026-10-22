@@ -10,7 +10,7 @@ class WebHTTPTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         import httpx
-        cls.http = httpx.Client(base_url='http://127.0.0.1:8080', timeout=30)
+        cls.http = httpx.Client(base_url=os.getenv('RA_TEST_BASE_URL', 'http://127.0.0.1:8080'), timeout=30)
         ready = cls.http.get('/ready').json()
         if ready.get('mode') != 'demo':
             raise RuntimeError('HTTP tests разрешены только в Demo.')

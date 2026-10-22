@@ -1,0 +1,27 @@
+# Execution ledger — plan: docs/superpowers/plans/2026-10-22-interview.md
+
+- Method: native, user approved 2026-10-22. No commits/push/deploy.
+- Ruling: Git branch creation blocked in restricted .git; work in place using skill sandbox fallback. Existing changes preserved; no Git mutations required for delivery.
+- Ruling: use this tracked ledger instead of bash-only helper scripts; Windows workspace and no-commit requirement make commit-based bookkeeping unsuitable.
+- Pre-flight: Tasks 1→2→3 share State and progress; Tasks 2→4 share factory/materials; Tasks 4→5 share public projection; Tasks 5→6 share routes/assets. Signatures compatible.
+- Ruling: zero-source Interview requires a narrowly scoped Chat materials mode; preserve Research requirement and validate Interview Workflow before granting that mode. Otherwise empty-search Report could never be discussed.
+- Task 1: started. Baseline tests running.
+- Baseline: 149 discovered / 137 executed / 12 skipped, OK (47.048s).
+- Task 1: complete — 3 schema/source tests RED (missing package) → GREEN.
+- Tasks 2/3: Graph/progress implemented — two rounds, 5/2 budget, source checks, failure second answer/Resume, save retry and running-before-completion. Initial Graph tests RED → 9 tests GREEN.
+- Task 4: implemented server factory/registration, explicit materials adapter, custom projection, Run routing and owner/idempotency reuse. Empty Interview supports existing Chat through explicit server material_mode; Research remains strict.
+- Task 5: assets integrated; asset test RED → GREEN. Existing design tokens/components retained. Static code in interview/static.
+- Task 6: separate Demo Agent 2027 / Web 8082 / .research_assistant/interview-stage12-check; tracing off, no paid calls. 3 interview HTTP tests OK (16.614s). Existing HTTP regressions running.
+- Regression: initial checkpoint=null caused state projection 500; reproduced by test_initial_checkpoint_none RED, corrected to nullable lookup, GREEN.
+- Ruling: owner denial expectation corrected to existing HTTP 403, preserving server policy rather than changing it to 404.
+- Browser: confirmed form, completed transcript restoration on reload, explicit second-answer error and saved first round; Resume clicked. Full browser acceptance ongoing.
+- Ruling: user requested native execution; final review will be a separate author self-review instead of spawning reviewer. No independent-review claim will be made.
+- Task 6: 10 existing HTTP tests OK (94.666s); final 3 Interview HTTP tests including SSE reconnect OK (30.033s).
+- Browser: running answer_question observed before completion; active reload recovered round 2; error/Resume finished with 2 rounds; completed reload retained exact Thread/checkpoint IDs; source details and existing Chat verified. Topic 1430 chars, 760px viewport: no overflow. Keyboard Tab moved from mode to clarification; download clicked, file artifact not verified through browser.
+- Final review: author self-review, native execution. Checked plan A–I, source identity, zero-source Chat boundary, pins/owner, Run routing, safe events, report paths, old workflows, package-data and Demo lifecycle. No unrelated refactoring.
+- Final review finding: absent pinned checkpoint could produce 500 due to checkpoint=null; test_missing_pinned_checkpoint_is_404 reproduced RED; nullable lookup fixed, targeted tests GREEN. Full final suite pending.
+- Remaining acceptance: browser 1280/375px and complete keyboard/screen-reader checks unavailable; provider token streaming and paid Live calls intentionally not performed. Stage remains in progress for browser acceptance, not marked complete.
+- Final suite .venv-web: 171 discovered / 156 executed / 15 skipped, OK (39.751s). Old .venv: 171 discovered / 151 executed / 20 skipped, OK (36.772s). Optional/integration skips are not passing checks.
+- compileall, pip check (web), git diff --check successful. .env and isolated Demo data-root remain ignored; screenshot saved outside repository.
+- After final BFF-only orderly restart: /ready 200 mode=demo; saved interview 200 completed with 2 rounds. Agent and previous Live/Demo servers unaffected.
+- Task 7: documentation and author review complete; no Critical/Important findings left after tested null-checkpoint fixes. No independent reviewer. No deferred minor code findings recorded; explicit acceptance limitations remain as above.

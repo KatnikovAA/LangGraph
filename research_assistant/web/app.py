@@ -22,10 +22,12 @@ from research_assistant.web.client import EventProjection
 
 def projection(data):
     values = data.get('values') or {}
-    return {'checkpoint_id': data.get('checkpoint', {}).get('checkpoint_id'),
+    return {'checkpoint_id': (data.get('checkpoint') or {}).get('checkpoint_id'),
         'next': data.get('next', []), 'status': values.get('status', 'new'),
         'topic': values.get('normalized_topic', values.get('topic', '')),
         'plan': values.get('plan'), 'report_markdown': values.get('report_markdown', ''),
+        'interview': {k: values.get(k) for k in ('round', 'analyst_role', 'clarification', 'questions', 'answers', 'transcript', 'progress', 'limitations')}
+                    if values.get('workflow', {}).get('mode') == 'interview' else None,
         'sources': values.get('sources', []), 'chat_settings': values.get('chat_settings'),
         'messages': [{'role': m['type'], 'text': m['content']} for m in values.get('messages', [])
                      if m.get('type') in ('human', 'ai') and not m.get('tool_calls') and isinstance(m.get('content'), str)],
@@ -81,6 +83,12 @@ def create_app(settings=None):
                 await service.owned(user, thread)
                 run = await service.client.runs.get(thread, request.query_params['run_id'])
                 result = {'run_id': run['run_id'], 'status': run['status']}
+            elif action == 'active-run':
+                thread = request.query_params['thread_id']
+                await service.owned(user, thread)
+                runs = await service.client.runs.list(thread, limit=100)
+                active = next((r for r in runs if r['status'] in ('pending', 'running')), None)
+                result = {'active': bool(active), 'run_id': active['run_id'] if active else None}
             else:
                 raise HTTPException(404, 'Маршрут не найден.')
         else:
@@ -91,6 +99,7 @@ def create_app(settings=None):
             if not isinstance(body, dict):
                 raise ValueError('Ожидается JSON object.')
             allowed = {'create_research': {'request_id', 'topic'},
+                'create_interview': {'request_id', 'topic', 'clarification'},
                 'review': {'request_id', 'thread_id', 'decision'},
                 'create_chat': {'request_id', 'research_thread_id', 'research_checkpoint_id', 'question', 'assistant'},
                 'ask': {'request_id', 'thread_id', 'question', 'assistant'},
@@ -125,11 +134,12 @@ def create_app(settings=None):
 
     async def events(request):
         user, thread, run = (request.query_params[k] for k in ('user_id', 'thread_id', 'run_id'))
-        await service.owned(user, thread)
+        info = await service.owned(user, thread)
         await service.client.runs.get(thread, run)
         async def stream():
-            projection = EventProjection()
-            yield 'event: progress\ndata: ' + json.dumps({'message': 'Подключены к Run; Demo chunks синтетические' if settings.mode == 'demo' else 'Подключены к Run'}) + '\n\n'
+            projection = EventProjection(run_id=run)
+            yield 'event: progress\ndata: ' + json.dumps({'message': 'Подключены к Run; Demo chunks синтетические'
+                if settings.mode == 'demo' and info['metadata'].get('kind') == 'chat' else 'Подключены к Run'}) + '\n\n'
             try:
                 async for part in service.client.runs.join_stream(thread, run, cancel_on_disconnect=False,
                       last_event_id=request.headers.get('last-event-id')):
@@ -137,6 +147,12 @@ def create_app(settings=None):
                     if projected:
                         kind, data = projected
                         yield f'event: {kind}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n'
+                final_run = await service.client.runs.get(thread, run)
+                if final_run['status'] in ('error', 'timeout', 'interrupted'):
+                    final_state = await service.state(user, thread)
+                    if final_run['status'] != 'interrupted' or any(t.get('error') for t in final_state.get('tasks', [])):
+                        yield 'event: problem\ndata: ' + json.dumps({'message': 'Выполнение остановилось. Обновите состояние и используйте Resume.'}) + '\n\n'
+                        return
                 yield 'event: done\ndata: {}\n\n'
             except httpx.HTTPError:
                 yield 'event: problem\ndata: ' + json.dumps({'message': 'Связь с Run прервана. Обновите состояние; вопрос повторно не отправлен.'}) + '\n\n'
@@ -155,7 +171,8 @@ def create_app(settings=None):
 
     app = Starlette(routes=[Route('/', index), Route('/health', health), Route('/ready', ready),
         Route('/events', events), Route('/report', report), Route('/api/{action}', api, methods=['GET', 'POST']),
-        Mount('/static', StaticFiles(directory=static, check_dir=False))], lifespan=lifespan,
+        Mount('/static', StaticFiles(directory=static, check_dir=False)),
+        Mount('/interview-static', StaticFiles(directory=Path(__file__).parents[1] / 'interview' / 'static', check_dir=False))], lifespan=lifespan,
         exception_handlers={kind: expected_error for kind in (HTTPException, httpx.HTTPError, ValueError, KeyError, MemoryError, ChatError, PersistenceError)})
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=['127.0.0.1', 'localhost', '[::1]', 'testserver'])
     return app
