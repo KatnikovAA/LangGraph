@@ -47,7 +47,7 @@ class ReportingTests(unittest.TestCase):
     def test_atomic_utf8_idempotent_safe_filename_and_cleanup(self):
         with tempfile.TemporaryDirectory() as root:
             path = write_report('Привет', root, '../../unsafe')
-            self.assertEqual(Path(path).parent, Path(root))
+            self.assertTrue(Path(path).parent.samefile(root))
             self.assertEqual(Path(path).read_text(encoding='utf-8'), 'Привет')
             self.assertEqual(write_report('Обновлено', root, '../../unsafe'), path)
             with patch('research_assistant.reporting.os.replace', side_effect=PermissionError()):

@@ -49,7 +49,7 @@ class StudioTests(unittest.TestCase):
                         self.assertNotIn('sources', final)
                         self.assertNotIn('report_path', final)
                     else:
-                        self.assertTrue(Path(final['report_path']).is_relative_to(Path(directory)))
+                        self.assertTrue(Path(final['report_path']).resolve().is_relative_to(Path(directory).resolve()))
                         self.assertIn('DEMO', Path(final['report_path']).read_text(encoding='utf-8'))
                         if action == 'edit':
                             self.assertEqual(final['plan'], decision['plan'])

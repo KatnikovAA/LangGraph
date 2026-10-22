@@ -35,7 +35,7 @@ class PersistenceTests(unittest.TestCase):
                 graph = build_graph(forbidden, review=True, search=True, report=True, output_dir=output,
                                     checkpointer=saver, search_function=forbidden, report_generator=forbidden)
                 snapshot = inspect_thread(graph, config, db)
-                self.assertEqual(snapshot.values['workflow']['output_dir'], output)
+                self.assertEqual(Path(snapshot.values['workflow']['output_dir']).resolve(), Path(output).resolve())
                 result = graph.invoke(None, config, durability='sync')
                 self.assertEqual(result['status'], 'completed')
                 self.assertIn('Обзор', Path(result['report_path']).read_text(encoding='utf-8'))
