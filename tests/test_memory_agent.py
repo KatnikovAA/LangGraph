@@ -16,6 +16,17 @@ def memory_call(name, data, identifier='call-memory'):
 
 
 class MemoryAgentTests(unittest.TestCase):
+    def test_runtime_store_path_matches_normalized_chat_binding(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = str(Path(root) / 'memory.sqlite')
+            alias = str(Path(root) / 'alias' / '..' / 'memory.sqlite')
+            with open_memory_store(path) as store:
+                model = FakeModel([AIMessage('Answer')])
+                graph, config, context = self.start(model, store, alias)
+                result = graph.invoke({'question': 'Question'}, config, context=context)
+                self.assertEqual(result['status'], 'answered')
+                self.assertEqual(context.store_path, str(Path(path).resolve()))
+
     def start(self, model, store, path, user='alice', thread='a', saver=None):
         graph = build_chat_graph(checkpointer=saver or InMemorySaver(), model_factory=lambda: model, store=store)
         config = {'configurable': {'thread_id': thread}}

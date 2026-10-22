@@ -3,6 +3,7 @@
 import json
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage
 from langgraph.prebuilt import ToolRuntime
@@ -19,6 +20,8 @@ class MemoryContext:
 
     def __post_init__(self):
         validate_user_id(self.user_id)
+        # Match initialize_chat's canonical path, including Windows short-path aliases.
+        object.__setattr__(self, 'store_path', str(Path(self.store_path).resolve()))
         if self.response_style not in (None, 'brief', 'detailed'):
             raise MemoryError('Неизвестный стиль Assistant.')
 
