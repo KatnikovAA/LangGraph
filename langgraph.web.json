@@ -1,6 +1,7 @@
 {
   "dependencies": ["."],
   "graphs": {
+    "team": "./research_assistant/server_graphs.py:create_team_graph",
     "interview": "./research_assistant/server_graphs.py:create_interview_graph",
     "research": "./research_assistant/server_graphs.py:create_research_graph",
     "chat": "./research_assistant/server_graphs.py:create_chat_graph",

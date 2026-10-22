@@ -36,12 +36,13 @@ class WebService:
         return await self.client.threads.search(metadata={'user_id': user, 'ra_web': 1}, limit=100)
 
     async def state(self, user, thread, checkpoint=None):
-        await self.owned(user, thread)
+        info=await self.owned(user, thread)
         if checkpoint is not None:
             if not isinstance(checkpoint, str):
                 raise ValueError('Checkpoint ID должен быть строкой UUID.')
             UUID(checkpoint)
-        data = await self.client.threads.get_state(thread, checkpoint_id=checkpoint)
+        data = await self.client.threads.get_state(thread, checkpoint_id=checkpoint,
+            subgraphs=info.get('metadata',{}).get('kind')=='team')
         if checkpoint is not None and (data.get('checkpoint') or {}).get('checkpoint_id') != checkpoint:
             raise HTTPException(404, 'Checkpoint не найден в Thread.')
         return data
@@ -61,7 +62,7 @@ class WebService:
         validate_user_id(user)
         if not isinstance(request_id, str) or not 8 <= len(request_id) <= 128:
             raise ValueError('Нужен корректный request_id.')
-        if not isinstance(payload, dict) or operation not in ('create_research', 'create_interview', 'review', 'create_chat', 'ask', 'resume'):
+        if not isinstance(payload, dict) or operation not in ('create_research', 'create_interview', 'create_team', 'review_team', 'review', 'create_chat', 'ask', 'resume'):
             raise ValueError('Некорректный сохранённый запрос.')
         async with self.lock:
             old = self.journal.lookup(user, request_id, {'operation': operation, **payload})
@@ -84,7 +85,7 @@ class WebService:
 
     async def run(self, user, request_id, operation, payload):
         validate_user_id(user)
-        if operation == 'create_interview':
+        if operation in ('create_interview','create_team'):
             from research_assistant.interview.schemas import validate_interview_input
             validate_interview_input(payload.get('topic'), payload.get('clarification', ''))
         if operation == 'create_research' and (not isinstance(payload.get('topic'), str) or not payload['topic'].strip()):
@@ -103,7 +104,7 @@ class WebService:
             thread = payload.get('thread_id')
             if thread:
                 owned = await self.owned(user, thread)
-                required_kind = {'review': 'research', 'ask': 'chat'}.get(operation)
+                required_kind = {'review': 'research', 'review_team':'team', 'ask': 'chat'}.get(operation)
                 if required_kind and owned['metadata'].get('kind') != required_kind:
                     raise ValueError('Операция не соответствует типу Thread.')
             if operation == 'create_chat':
@@ -120,8 +121,8 @@ class WebService:
                         self.journal.bind_run(user, request_id, old['thread_id'], found['run_id'])
                         return {'thread_id': old['thread_id'], 'run_id': found['run_id']}
                 raise HTTPException(409, 'Исход прежнего запроса не подтверждён. Обновите состояние; автоматический повтор отключён.')
-            if operation in ('create_research', 'create_interview', 'create_chat'):
-                kind = {'create_research': 'research', 'create_interview': 'interview', 'create_chat': 'chat'}[operation]
+            if operation in ('create_research', 'create_interview', 'create_team', 'create_chat'):
+                kind = {'create_research': 'research', 'create_interview': 'interview', 'create_team':'team', 'create_chat': 'chat'}[operation]
                 thread = str(uuid5(NAMESPACE_URL, f'ra-web:{user}:{request_id}'))
                 title = payload.get('topic', 'Обсуждение отчёта')
                 if kind == 'chat':
@@ -137,10 +138,20 @@ class WebService:
             command, input_data, checkpoint = None, None, None
             info = await self.owned(user, thread)
             assistant = info['metadata']['kind']
-            if assistant not in ('research', 'interview', 'chat'):
+            if assistant not in ('research', 'interview', 'team', 'chat'):
                 raise ValueError('Неизвестный тип Workflow.')
             context = None
-            if operation == 'create_interview':
+            if operation == 'create_team':
+                from research_assistant.team.schemas import WORKFLOW
+                input_data={'topic':payload['topic'],'clarification':payload.get('clarification',''),'workflow':dict(WORKFLOW)}
+            elif operation == 'review_team':
+                if state.get('next')!=['review_analysts']:
+                    raise HTTPException(409,'Сейчас роли не ожидают Review.')
+                from research_assistant.team.schemas import decision_adapter,validate_roles,Edit
+                decision=decision_adapter.validate_python(payload['decision'])
+                if isinstance(decision,Edit):validate_roles([r.model_dump(mode='json') for r in decision.roles])
+                command={'resume':decision.model_dump(mode='json')}
+            elif operation == 'create_interview':
                 input_data = {'topic': payload['topic'], 'clarification': payload.get('clarification', ''),
                               'workflow': {'version': 'web-1', 'mode': 'interview'}}
             elif operation == 'create_research':
@@ -160,7 +171,10 @@ class WebService:
                     raise ValueError('Для Chat нужен завершённый Research Checkpoint.')
                 source_info = await self.owned(user, payload['research_thread_id'])
                 source_kind = source_info['metadata'].get('kind')
-                if source_kind == 'interview':
+                if source_kind == 'team':
+                    from research_assistant.team.materials import team_materials
+                    materials=team_materials(rv,payload['research_thread_id'])
+                elif source_kind == 'interview':
                     from research_assistant.interview.materials import interview_materials
                     materials = interview_materials(rv, payload['research_thread_id'])
                 elif source_kind == 'research' and rv.get('workflow', {}).get('mode') == 'review_search_report':
@@ -216,7 +230,7 @@ class WebService:
             self.journal.bind_run(user, request_id, thread, None)
             run = await self.client.runs.create(thread, assistant, input=input_data, command=command,
                 context=context, checkpoint_id=checkpoint, multitask_strategy='reject',
-                stream_mode=['updates', 'custom'] if assistant == 'interview' else ['updates', 'messages'], stream_subgraphs=True, stream_resumable=True,
+                stream_mode=['updates', 'custom'] if assistant in ('interview','team') else ['updates', 'messages'], stream_subgraphs=True, stream_resumable=True,
                 metadata={'user_id': user, 'request_id': request_id, 'ra_web': 1},
                 config={'recursion_limit': 30, 'max_concurrency': 2})
             self.journal.bind_run(user, request_id, thread, run['run_id'])

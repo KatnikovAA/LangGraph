@@ -38,6 +38,16 @@ def create_interview_graph(config: RunnableConfig):
     return build_interview_graph(output_dir=str(settings.reports), **options)
 
 
+def create_team_graph(config: RunnableConfig):
+    from research_assistant.team.graph import build_team_graph
+    settings=load_server_settings()
+    options={}
+    if settings.mode=='demo':
+        from research_assistant.team.demo import demo_services
+        options=demo_services()
+    return build_team_graph(output_dir=str(settings.reports),**options)
+
+
 class ConcurrencyState(TypedDict):
     value: str
 

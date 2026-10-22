@@ -21,3 +21,9 @@ reports/
 *.sqlite3-*
 *.db
 *.db-*
+
+# Local diagnostics and temporary work files
+*.log
+*.log.*
+*.trace
+*.tmp

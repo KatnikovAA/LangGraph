@@ -1,1370 +1,170 @@
-# Technical Research Assistant
+<div align="center">
 
-Локальное приложение в браузере: тема → Review плана → поиск → Markdown-отчёт →
-обсуждение с историей и Streaming. Есть Profile/Notes между диалогами,
-Checkpoints/Fork/Replay и конфигурации Assistant brief/detailed.
-Web-путь использует настоящий Agent Server; прежний CLI сохранён.
+# Research Assistant
 
-## Быстрый запуск Web Interface — Windows PowerShell
+### От сложного вопроса — к отчёту с источниками.
 
-```powershell
-Set-Location 'F:\AI Agent\LangGraph'
-py -3.12 -m venv .venv-web
-.\.venv-web\Scripts\python.exe -m pip install -r requirements-web.lock -e '.[web]'
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
-.\scripts\start-web.ps1
-Start-Process 'http://127.0.0.1:8080'
+Исследовательский workspace с AI-аналитиками, управляемым поиском<br>и обсуждением результатов с сохранением контекста.
+
+![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)
+![LangGraph](https://img.shields.io/badge/LangGraph-Stateful_Workflows-1C3C3C?style=flat-square)
+![SQLite](https://img.shields.io/badge/Persistence-SQLite-003B57?style=flat-square&logo=sqlite&logoColor=white)
+![Interface](https://img.shields.io/badge/Interface-Web_%2B_CLI-2563EB?style=flat-square)
+
+[Возможности](#возможности) · [Архитектура](#архитектура) · [Запуск](#запуск) · [Документация](#документация)
+
+</div>
+
+---
+
+**Research Assistant** помогает исследовать технические темы: согласовать направление, собрать источники, сопоставить выводы и сохранить результат в Markdown. Пользователь контролирует план и роли аналитиков до начала поиска, а затем может обсуждать конкретный отчёт, продолжать прерванные запуски и сравнивать альтернативные варианты исследования.
+
+## Возможности
+
+| Сценарий | Результат |
+| :--- | :--- |
+| **Исследование по плану** | Редактируемый план, параллельный поиск по разделам и отчёт с References. |
+| **Интервью с экспертом** | Два раунда вопросов и ответов по найденным материалам, Transcript и общий вывод. |
+| **Команда аналитиков** | Две редактируемые роли, параллельные интервью и синтез с общим реестром источников. |
+| **Обсуждение отчёта** | Диалог, привязанный к завершённому Research Checkpoint, с инструментами чтения сохранённых источников. |
+| **Память пользователя** | Profile и Notes между диалогами; запись по явному запросу, просмотр и удаление данных. |
+| **История и варианты** | Checkpoints, Resume, Replay и Fork с отдельными артефактами отчётов. |
+
+### Контроль выполнения
+
+- **Human-in-the-Loop:** утверждение, редактирование и отмена плана или ролей через `interrupt()`.
+- **Восстановление:** сохранение состояния между процессами и подключение к Run после обновления страницы.
+- **Прозрачность:** Progress Events и Streaming показывают ход работы; итоговый результат сохраняется отдельно.
+- **Проверяемые ссылки:** модель оперирует ID источников; приложение проверяет ID и формирует Markdown-ссылки программно.
+- **Управляемый контекст:** полная история хранится в Checkpoints, вход модели собирается через Filter, Trim и incremental Summary.
+
+## Архитектура
+
+```mermaid
+flowchart LR
+    UI[Web Interface] --> BFF[Application API / SSE]
+    BFF --> SERVER[LangGraph Agent Server]
+    SERVER --> R[Research Graph]
+    SERVER --> I[Interview Graph]
+    SERVER --> T[Team Graph]
+    T --> W[Parallel Interview Workers]
+    R --> REPORT[Markdown + References]
+    I --> REPORT
+    W --> REPORT
+    REPORT --> CHAT[Chat Graph + Agent Subgraph]
+    CHAT <--> STORE[Profile / Notes Store]
+    SERVER <--> CP[Threads / Checkpoints]
 ```
 
-По умолчанию **Demo**, без платных API: сервисы модели/поиска детерминированные,
-Graph/ToolNode/Store/Checkpoints и серверный Streaming настоящие.
-Demo chunks синтетические; provider token streaming ими не подтверждается.
-Python >=3.11; фактически проверяется Windows/Python 3.12.14.
+**LangGraph управляет жизненным циклом исследования.** `StateGraph` задаёт переходы и паузы, `Send` распределяет независимые задачи, Reducers объединяют результаты, а Checkpoints позволяют продолжать выполнение. Interview Core переиспользуется самостоятельным интервью и Worker-ветками команды.
 
-- UI и BFF: `http://127.0.0.1:8080`, health `/health`, readiness `/ready`.
-- Agent Server: `http://127.0.0.1:2025`, API `/docs`.
-- Остановка: `.\scripts\stop-web.ps1`.
-- Live: после остановки Demo — `.\scripts\start-web.ps1 -Mode live`.
-  Ключи Polza/Tavily остаются в серверном `.env`; без них Live не стартует.
-  Остановка Live: `.\scripts\stop-web.ps1 -Mode live`.
+**Web-слой отвечает за пользовательский сценарий.** Starlette BFF связывает запросы с Run IDs, передаёт безопасные события через SSE, проверяет принадлежность данных и восстанавливает неподтверждённые запросы. Browser UI написан на JavaScript и CSS без отдельной сборки frontend.
 
-Данные Web Demo/Live раздельны: `.research_assistant/web/<mode>/` содержит
-`runtime/.langgraph_api` (native Threads/Checkpoints/Assistants), `memory.sqlite`
-(единый Store), `application.sqlite` (journal запросов) и `reports/`.
-Для backup штатно остановите оба процесса и скопируйте весь каталог.
-Старые CLI SQLite Threads не мигрируются автоматически. Локальный user_id —
-разделение данных, не аутентификация. Оба сервера доступны только на loopback.
-`langgraph dev` — локальная разработка, не production Deployment; внешней публикации нет.
+**Диалог отделён от исследования.** Parent Chat Graph хранит историю и Summary; Agent Subgraph выполняет один вопрос через `bind_tools` и `ToolNode`. Привязка к точному Checkpoint сохраняет контекст выбранного результата при появлении новых веток.
 
-Основная стратегия Double Texting — явно `reject`. Настоящая практика четырёх
-стратегий и SDK-пример создания/применения Assistants:
-
-```powershell
-.\.venv-web\Scripts\python.exe scripts/api_examples.py
-.\.venv-web\Scripts\python.exe scripts/double_texting.py
-.\.venv-web\Scripts\python.exe -m unittest discover -s tests -q
-$env:RA_HTTP_TESTS='1'
-.\.venv-web\Scripts\python.exe -m unittest discover -s tests -p test_web_http.py -v
-Remove-Item Env:RA_HTTP_TESTS
-```
-
-HTTP-проверки запускайте только на работающем Demo. Отдельная проверка
-перезапуска и её предусловия описаны в руководстве.
-
-**[Итоговый разбор этапов 8–11 и Studio-практика](docs/final-walkthrough.md)**:
-карта файлов/функций, путь вопроса и памяти, ручные сценарии, backup,
-API/SDK, Assistants/Double Texting, ограничения и вопросы на понимание.
-Архитектура: `docs/superpowers/specs/2026-10-21-web-application-design.md`;
-план: `docs/superpowers/plans/2026-10-21-web-application.md`.
-
-## Этап 12 — «С интервью»
-
-В существующей форме выберите «С интервью»: тема и уточнение → два раунда
-Analyst/Expert → Report → обсуждение с точным Checkpoint pin. Панель Nodes показывает
-реальные начало/завершение/ошибку, раунд и длительность. Reload не создаёт новый Run;
-после ошибки доступен Resume. Источники имеют стабильные S1/S2 между раундами.
-Штатный бюджет: до 5 model calls и 2 поисков, без скрытых retries.
-Пустой поиск отражается как ограничение, без вымышленных источников.
-
-```powershell
-.\research_assistant\interview\start-demo.ps1
-# отдельная Demo: UI http://127.0.0.1:8082, Agent http://127.0.0.1:2027
-# при занятых портах: -AgentPort 2028 -WebPort 8083
-```
-
-Новый код собран в **[research_assistant/interview](research_assistant/interview/README.md)**;
-тесты — `tests/interview/`. Launcher использует отдельный data-root и существующие
-entrypoints, не перенастраивая действующий Live. Новых dependencies нет.
-Token streaming интервью пока не включён: доступны настоящие Progress Events
-и готовые сообщения; Demo не имитирует provider chunks. Live использует текущие
-Polza/Tavily, без разрешения платные вызовы не выполнялись. Этап 13 не реализован.
-**[Команды, путь данных, приёмка и ограничения](docs/interview-walkthrough.md)**.
-
-## Прежний CLI
-
-Python-приложение принимает техническую тему и составляет структурированный план
-исследования на русском языке через LangGraph и Польза AI.
-По желанию план можно проверить, исправить и утвердить в терминале.
-После утверждения плана можно найти источники через Tavily.
-В полном режиме приложение формирует короткий Markdown-отчёт и сохраняет Thread
-в SQLite, чтобы продолжить его после перезапуска процесса.
-
-Компактный вывод: модель получает инструкцию составить 1 раздел с 1 вопросом
-и до 40 слов во всём плане. Это пожелание промпта, не жёсткий лимит схемы.
-Tavily запрашивается с `max_results=1` на раздел; каждый сохраняемый `snippet`
-содержит не более 500 символов (обрезается локально после проверки ответа).
-Полный ответ API всё ещё может быть длиннее. Ручной план с несколькими разделами
-по-прежнему вызывает отдельный запрос для каждого раздела.
-В режиме `--report` snippets передаются модели; сокращение уменьшает входной
-контекст Report. В прежних режимах дополнительного LLM-вызова нет.
-
-## Локальная Studio: учебный Research Graph
-
-Современная LangSmith Studio работает в браузере; отдельное desktop-приложение
-и Docker для `langgraph dev` не нужны. Это дополнительная практика Academy 1/3,
-не подтверждение изучения всего этапа 9. В прежнем `langgraph.json` зарегистрирован
-только Research; новый Web config `langgraph.web.json` содержит Research и Chat.
-
-Из корня проекта, один раз (отдельное окружение сохраняет зависимости CLI):
-
-```powershell
-.\.venv\Scripts\python.exe -m venv .venv-studio
-.\.venv-studio\Scripts\python.exe -m pip install --no-compile -e ".[studio]"
-```
-
-Запуск:
-
-```powershell
-$env:LANGSMITH_TRACING = 'false'
-$env:LANGCHAIN_TRACING_V2 = 'false'
-$env:LOG_COLOR = 'false'
-$env:LANGGRAPH_CLI_NO_ANALYTICS = '1'
-.\.venv-studio\Scripts\langgraph.exe dev --no-browser
-```
-
-Оставьте терминал работающим. Откройте Studio по ссылке из его вывода:
-`https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:2024`.
-Если браузер запрашивает доступ к локальной сети, разрешите его для Studio.
-Если встроенная вкладка остаётся пустой, откройте эту же ссылку в обычном
-Chrome/Edge. При Failed to fetch проверьте разрешение сайта Local network access:
-[официальная диагностика](https://docs.langchain.com/langsmith/troubleshooting-studio).
-Пустой экран сам по себе не доказывает конкретную причину ошибки.
-Остановка сервера: Ctrl+C. Сервер слушает только 127.0.0.1; tunnel не включён.
-
-Проверки без реальных API:
-
-```powershell
-.\.venv\Scripts\python.exe -m unittest discover -s tests -q
-# Только при уже запущенном локальном сервере; создаёт три учебных Thread:
-.\.venv-studio\Scripts\python.exe tests/studio_server_smoke.py
-```
-
-`langgraph.json` регистрирует `research` из `research_assistant/studio.py`.
-Его `demo_plan(topic)`, `demo_search(query)` и `demo_report(topic, plan, sources)`
-возвращают локальные учебные данные; модель, Tavily и URL источника не вызываются.
-Создаётся полный Research Graph с прежними Nodes и настоящим `review_plan/interrupt`.
-Report явно помечен как подмена и сохраняется в `.research_assistant/studio/reports/`.
-
-Persistence разделена: `build_graph(..., persistence='server')` компилирует Graph
-без Checkpointer; Agent Server предоставляет собственный. `langgraph dev` хранит
-локальные данные в `.langgraph_api/`. Это не SQLite CLI, не миграция его Threads
-и не production Deployment. Прежняя `.research_assistant/checkpoints.sqlite`
-не открывается серверной точкой входа. В CLI режим по умолчанию `caller`:
-Review по-прежнему требует явно переданный Saver.
-
-Первый сценарий выполняйте по одному шагу с сопровождением: открыть Graph,
-создать новый Thread с `{"topic":"Архитектура LangGraph"}`, посмотреть State
-до/после `generate_plan`, затем остановку `review_plan`. Для Resume нужен JSON
-`{"action":"approve"}`; отмена — `{"action":"cancel"}`; правка —
-`{"action":"edit","plan":{"title":"Новый план","sections":[{"title":"State","questions":["Как меняется State?"]}]}}`.
-Это значение Resume, а не новый input Graph. Для нового исследования создавайте
-новый Thread: `search_batches` использует add-Reducer. На первом знакомстве
-используйте Review для правки; Replay/Fork в Studio и файловые эффекты требуют
-отдельного разбора. CLI-команды ветвления к серверным Threads не применяются.
-
-Tracing выключен в `langgraph.json` и команде запуска. Корневая `.env` не загружается
-серверной конфигурацией; ключи API для подмен не нужны. Studio — интерфейс просмотра
-Graph и State; LangSmith tracing — отдельная отправка трасс в облачный проект.
-Если позже понадобится tracing, сначала отдельно согласуйте его включение,
-данные для отправки и проект, затем настройте `LANGSMITH_API_KEY`,
-`LANGSMITH_PROJECT`, `LANGSMITH_TRACING=true`. Сейчас этого делать не требуется.
-
-Документация: [Studio](https://docs.langchain.com/langsmith/quick-start-studio),
-[CLI](https://docs.langchain.com/langsmith/cli),
-[серверная Persistence](https://docs.langchain.com/oss/python/langgraph/checkpointers).
-
-## Установка в Windows PowerShell
-
-Требуется Python 3.11 или новее (фактически проверяется Python 3.12).
-
-```powershell
-Set-Location 'F:\AI Agent\LangGraph'
-# Только если окружения ещё нет:
-py -3 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e .
-```
-
-Активация окружения не требуется.
-
-## Настройки Польза AI
-
-Если `.env` ещё нет, создайте его из примера:
-
-```powershell
-if (-not (Test-Path .env)) { Copy-Item .env.example .env }
-notepad .env
-```
-
-Заполните локальный `.env`:
-
-```dotenv
-POLZA_API_KEY=
-POLZA_MODEL=
-POLZA_BASE_URL=https://polza.ai/api/v1/
-```
-
-- `POLZA_API_KEY` — секретный ключ Польза AI.
-- `POLZA_MODEL` — точный ID выбранной вами модели из каталога с префиксом
-  провайдера. Требуется поддержка `response_format: json_schema`.
-  Платная модель по умолчанию не выбирается.
-- `POLZA_BASE_URL` — необязательный адрес API, по умолчанию адрес выше.
-
-`.env` читается из текущей рабочей папки при обращении к модели.
-Переменные окружения имеют приоритет. Файл исключён из Git.
-Не отправляйте ключ в чат и не сохраняйте его в `.env.example`.
-
-Используется `ChatOpenAI.with_structured_output` с `method="json_schema"`,
-`strict=False` и локальной проверкой Pydantic. Поддержка схемы зависит от модели:
-отказ API или несовместимый ответ завершает запуск ошибкой без фиктивного плана.
-[Интеграция LangChain](https://polza.ai/docs/integracii/langchain),
-[структурированный вывод](https://polza.ai/docs/gaidy/structured-output).
+| Компонент | Технологии |
+| :--- | :--- |
+| Workflow и агенты | LangGraph, LangChain Core, LangChain OpenAI |
+| Структурированные ответы | Pydantic, JSON Schema |
+| Модель и поиск | Польза AI — OpenAI-compatible API; Tavily |
+| Web и Streaming | Starlette, Uvicorn, LangGraph SDK, SSE |
+| Хранение | Native Agent Server Persistence, SQLite Checkpointer и Store |
+| Проверки | `unittest`, HTTP-сценарии, проверки перезапуска и восстановления |
 
 ## Запуск
 
-Команда обращается к выбранной модели и может расходовать баланс Польза AI:
+Основной локальный сценарий — **Windows PowerShell и Python 3.12**. Пакет поддерживает Python 3.11+, готовые launchers предназначены для Windows.
+
+### Установка
 
 ```powershell
-.\.venv\Scripts\python.exe -m research_assistant --topic '  Архитектура LangGraph  '
+git clone https://github.com/KatnikovAA/LangGraph.git
+Set-Location LangGraph
+py -3.12 -m venv .venv-web
+.\.venv-web\Scripts\python.exe -m pip install -r requirements-web.lock -e '.[web]'
+Copy-Item .env.example .env
 ```
 
-Пример структуры результата (иллюстрация, не результат реального запроса):
+Заполните `.env` на сервере:
 
-```json
-{
-  "topic": "  Архитектура LangGraph  ",
-  "normalized_topic": "Архитектура LangGraph",
-  "status": "planned",
-  "plan": {
-    "title": "Исследование архитектуры LangGraph",
-    "sections": [
-      {
-        "title": "Граф и состояние",
-        "questions": ["Как узлы обновляют состояние?"]
-      }
-    ]
-  }
-}
+```dotenv
+POLZA_API_KEY=your_api_key
+POLZA_MODEL=your_model_id
+POLZA_BASE_URL=https://polza.ai/api/v1/
+TAVILY_API_KEY=your_api_key
 ```
 
-В промпте запрошены 1 раздел с 1 вопросом и до 40 слов во всём плане.
-Количество разделов, вопросов и слов программно не ограничивается;
-лимит выходных токенов приложение не задаёт. Модель может отступить от пожеланий
-промпта. Структура JSON проверяется. Строки обрезаются по краям
-и проверяются на непустоту. Русский язык, соответствие теме и отсутствие повторов
-задаются инструкцией модели; семантическое качество не гарантируется схемой.
-`planned` означает наличие плана, исследование ещё не выполнено.
+Модель выбирается явно через `POLZA_MODEL`. Ключи и локальные данные исключены из Git.
 
-JSON выводится в stdout в UTF-8, исходная строка сохраняется.
-Пробелы, табуляция и переносы строк нормализуются в `normalized_topic`.
-Пустая тема отклоняется до конфигурации и вызова API:
+### Web-приложение
 
 ```powershell
-.\.venv\Scripts\python.exe -m research_assistant --topic '   '
-$LASTEXITCODE # 2
+.\scripts\start-web.ps1 -Mode live
+Start-Process 'http://127.0.0.1:8080'
 ```
 
-В stderr: `Ошибка: Тема исследования не должна быть пустой.`
-Ожидаемые ошибки конфигурации, подключения и структуры также дают stderr и код 2
-без traceback и успешного JSON. Повторных запросов нет; таймаут API — 60 с.
+Введите тему, выберите обычное исследование, одно интервью или команду аналитиков. Проверьте план или роли, получите отчёт и перейдите к его обсуждению.
 
-## Использование из Python
+| Адрес | Назначение |
+| :--- | :--- |
+| `http://127.0.0.1:8080` | Пользовательский интерфейс |
+| `http://127.0.0.1:8080/ready` | Готовность и текущий режим |
+| `http://127.0.0.1:2025/docs` | API Agent Server |
 
-```python
-from research_assistant.graph import build_graph
+Остановка: `.\scripts\stop-web.ps1 -Mode live`. Не запускайте второй экземпляр поверх работающего.
 
-graph = build_graph()
-result = graph.invoke({"topic": "Архитектура LangGraph"})
-```
+> [!NOTE]
+> Live обращается к модели и Tavily: стоимость зависит от провайдеров. Для автономной проверки доступен явный `-Mode demo` с детерминированными ответами и отдельным каталогом данных. Он не подтверждает качество модели или реального поиска.
 
-Путь: `START → validate_topic → prepare_request → generate_plan → END`.
-Первый узел добавляет `normalized_topic`, второй — промежуточный `status="ready"`.
-Третий передаёт нормализованную тему генератору, проверяет `ResearchPlan`, добавляет
-сериализованный `plan` и `status="planned"` только после успеха.
-Все узлы возвращают частичные обновления без изменения входного словаря.
-Выходные поля `RequestState` помечены `NotRequired`; вход содержит только `topic`.
-Для тестов `build_graph(plan_generator)` принимает функцию от темы,
-возвращающую `ResearchPlan` или словарь плана.
-
-## Проверка и утверждение плана
-
-Прежний режим возвращает `status="planned"`:
+### CLI
 
 ```powershell
-.\.venv\Scripts\python.exe -m research_assistant --topic 'Память AI-агентов'
+# План исследования
+.\.venv-web\Scripts\python.exe -m research_assistant --topic 'Архитектура событийных систем'
+
+# План → подтверждение → поиск → отчёт
+.\.venv-web\Scripts\python.exe -m research_assistant --topic 'Архитектура событийных систем' --review --search --report
 ```
 
-Интерактивный режим:
+Сценарии Resume, Checkpoints и отдельных экземпляров — в [руководстве по эксплуатации](docs/operations.md).
 
-```powershell
-.\.venv\Scripts\python.exe -m research_assistant --topic 'Память AI-агентов' --review
-```
-
-После генерации граф приостанавливается в `review_plan` через `interrupt()`.
-CLI показывает план и меню: `1` — утвердить, `2` — загрузить исправленный план,
-`3` — отменить. При выборе `2` введите путь к UTF-8 JSON-файлу (BOM допустим).
-Файл содержит только объект плана, без topic/status и внешнего поля plan:
-
-```json
-{
-  "title": "Память AI-агентов",
-  "sections": [
-    {
-      "title": "Состояние графа",
-      "questions": ["Как сохраняется состояние?", "Как изолировать исследования?"]
-    }
-  ]
-}
-```
-
-Проверенный исправленный план показывается повторно. Введите `да`, чтобы
-утвердить его, либо `нет`, чтобы вернуться к меню. Ошибка команды, пути,
-кодировки, JSON или схемы позволяет повторить ввод. EOF и Ctrl+C во время
-ожидания решения означают отмену. Без интерактивного stdin режим `--review`
-завершается с кодом 2 до вызова модели; stdout можно перенаправить в файл.
-
-При утверждении CLI продолжает граф через `Command(resume=...)`:
-`approved` означает утверждённый план, `cancelled` — отмену пользователем.
-Оба результата возвращаются как итоговый JSON с кодом 0. Отмена сохраняет
-исходный план. Отказ от подтверждения правки не меняет его. Исходные `topic`
-и `normalized_topic` сохраняются. Исследование ещё не выполняется.
-Предварительный план, меню и ошибки ввода идут в stderr, только итоговый JSON —
-в stdout. Вызов модели при продолжении не повторяется.
-
-Для ручной проверки запустите review-режим и выберите `1`; в следующем запуске
-выберите `3`; затем проверьте `2` с ошибочным путём и исправленным файлом.
-Каждый новый запуск с непустой темой вызывает настроенную модель и может быть платным.
-
-### Пауза и продолжение из Python
-
-```python
-from uuid import uuid4
-from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.types import Command
-from research_assistant.graph import build_graph
-
-checkpointer = InMemorySaver()
-graph = build_graph(review=True, checkpointer=checkpointer)
-config = {"configurable": {"thread_id": uuid4().hex}}
-paused = graph.invoke({"topic": "Память AI-агентов"}, config)
-plan = paused["__interrupt__"][0].value["plan"]
-# Здесь вызывающий код получает решение человека.
-result = graph.invoke(Command(resume={"action": "approve"}), config)
-```
-
-Другие решения: `{"action": "cancel"}` или
-`{"action": "edit", "plan": corrected_plan}`. Узел самостоятельно проверяет
-решение и исправленный план; неверное решение вызывает `ValidationError`.
-Не используйте `Command(update=...)` для передачи пользовательской правки.
-Для нового исследования создавайте новый `thread_id`; для resume сохраняйте
-тот же граф, checkpointer и config. `build_graph` требует явный checkpointer
-при `review=True`; прежний `build_graph(plan_generator)` работает как раньше.
-
-Путь: `START → validate_topic → prepare_request → generate_plan → review_plan → END`.
-Во время паузы статус остаётся `planned`. При resume узел `review_plan`
-запускается с начала; вызов API находится в предыдущем узле `generate_plan`.
-`interrupt()` не обёрнут в перехват исключений и передаёт сериализуемый payload.
-`InMemorySaver` хранит данные только в текущем процессе: после его завершения
-пауза теряется. Восстановление после перезапуска пока не поддерживается.
-
-## Поиск по утверждённому плану
-
-Обновите зависимости (включая официальный `tavily-python`):
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install -e .
-notepad .env
-```
-
-Добавьте в существующий `.env` строку `TAVILY_API_KEY=ваш_ключ`.
-Файл исключён из Git; ключ не нужен для прежних режимов и отмены до поиска.
-Не заменяйте настройки Польза AI. Значения окружения имеют приоритет над `.env`.
-
-Три режима PowerShell:
-
-```powershell
-# Только план: planned
-.\.venv\Scripts\python.exe -m research_assistant --topic 'Память AI-агентов'
-
-# Проверка человеком без поиска: approved / cancelled
-.\.venv\Scripts\python.exe -m research_assistant --topic 'Память AI-агентов' --review
-
-# Проверка человеком, затем поиск: sources_found / no_sources / cancelled
-.\.venv\Scripts\python.exe -m research_assistant --topic 'Память AI-агентов' --review --search
-```
-
-`--search` без `--review` отклоняется с кодом 2 до обращения к API.
-В поисковом режиме `1` в меню утверждает текущий план и запускает поиск;
-`2` позволяет сначала загрузить и подтвердить правку; `3` завершает с cancelled
-без поиска. Генерация плана при продолжении не повторяется.
-
-Путь после `review_plan` выбирает runtime Router через `add_conditional_edges`:
+## Устройство репозитория
 
 ```text
-START → validate_topic → prepare_request → generate_plan → review_plan
-                                                           ├─ approved → prepare_search → Workers → collect_sources → END
-                                                           └─ cancelled → END
+research_assistant/
+├── graph.py                 # Research Workflow и параллельный поиск
+├── reporting.py             # References и атомарная запись Markdown
+├── chat*.py                 # Диалог, контекст и Streaming
+├── user_memory.py           # Profile / Notes и изоляция данных
+├── interview/               # Analyst / Expert и общий Interview Core
+├── team/                    # Review ролей, Workers и синтез
+├── web/                     # BFF, SSE, восстановление и интерфейс
+└── server_*.py              # Graph entrypoints, настройки и Store lifecycle
+scripts/                     # Локальный запуск и SDK-примеры
+tests/                       # Автономные и opt-in интеграционные проверки
 ```
-
-`if search` при построении выбирает состав графа. Conditional Edge во время
-выполнения выбирает путь по текущему status после решения человека. В режиме
-поиска безусловного ребра review_plan → END нет. При `--review` без `--search`
-сохраняется прежнее завершение после review_plan.
-
-Для каждого раздела окончательного плана формируется один запрос:
-`normalized_topic + title раздела + все questions`, соединённые пробелами.
-Запросы выполняются отдельными LangGraph Tasks с max_concurrency=2, без нового LLM-вызова. Tavily вызывается
-с `search_depth="basic"`, `max_results=1`, `include_answer=False`,
-`include_raw_content=False`, `auto_parameters=False`, таймаутом 30 секунд.
-Автоматических повторов нет; объём поиска равен числу утверждённых разделов.
-
-У Tavily [максимум 400 символов в запросе](https://help.tavily.com/articles/5504684071-optimizing-your-query-parameter).
-Все строки проверяются до первого поискового запроса. Превышение даёт понятную
-ошибку с кодом 2; запрос не обрезается. При необходимости сократите тему или
-текст раздела в исправленном плане перед утверждением. Размер самого плана,
-количество разделов, вопросов и выходных токенов технически не ограничиваются.
-
-В итоговый JSON добавляется список `sources`. Пример одного элемента:
-
-```json
-{
-  "title": "Документация",
-  "url": "https://example.org/docs",
-  "snippet": "Фрагмент результата поиска",
-  "section_indexes": [0, 2]
-}
-```
-
-Индексы разделов начинаются с 0. Точные дубли URL объединяются в порядке
-первого появления; title и snippet сохраняются от первого результата,
-section_indexes объединяются без повторов. Пробелы по краям title и url удаляются,
-остальные различия URL сохраняются (например, наличие завершающего `/`).
-
-Каждый источник проверяется `Source`: непустой title, HTTP(S) URL, строковый
-snippet. Поле `content` Tavily становится snippet; если content отсутствует,
-snippet пустой. `content=null`, неверный URL, пустой title, неверный JSON или
-отсутствующий список results считаются ошибкой всего поиска. Некорректные
-элементы не пропускаются молча; ссылки и фрагменты не придумываются.
-
-- `sources_found`: все запросы успешны, найден хотя бы один источник.
-- `no_sources`: все запросы успешны, `sources=[]`. План без разделов также
-  даёт no_sources без поисковых запросов.
-- `cancelled`: отмена до поиска, ключ поиска не требуется.
-
-Ошибка любого запроса даёт код 2 и сообщение в stderr без успешного JSON
-или частичных sources. Ранее выполненные запросы могли уже израсходовать квоту.
-snippets — фрагменты, предоставленные Search API; приложение не открывает
-найденные ссылки и не читает полные страницы. Без `--report` отчёт не создаётся.
-
-Из Python используйте `build_graph(review=True, search=True, checkpointer=...)`
-с тем же протоколом pause/resume. Для автономной проверки можно передать
-`search_function(query)`, возвращающую список словарей с title, url и snippet.
-`search.py` отвечает за конфигурацию Tavily и ответы SDK; `graph.py` — за
-запросы по разделам, проверку, объединение источников и маршрутизацию.
-
-## Полный режим: Report Generation + Persistence
-
-Обновите установку: `python -m pip install -e .` (используя Python из `.venv`,
-как в командах ниже). Новая прямая зависимость — `langgraph-checkpoint-sqlite`
-с файловым `SqliteSaver`. Проверено: LangGraph 1.2.16, SQLite saver 3.1.2.
-Ключи Польза AI и Tavily берутся из окружения/локального `.env`, в State не записываются.
-
-```powershell
-Set-Location 'F:\AI Agent\LangGraph'
-.\.venv\Scripts\python.exe -m pip install -e .
-# Полный запуск с меню утверждения:
-.\.venv\Scripts\python.exe -m research_assistant --topic 'Архитектура LangGraph' --review --search --report
-```
-
-Сначала выполняются прежние Nodes validate_topic → prepare_request → generate_plan
-→ review_plan. После approve/edit: prepare_search → search_section Workers → collect_sources → при sources_found
-generate_report → save_report → END. Cancelled и no_sources завершаются без
-дополнительного обращения к Report-модели и без Markdown-файла.
-
-Report-модель получает только тему, утверждённый план и названия/snippets
-источников со стабильными ID S1, S2 и т. д. Промпт просит до 200 слов,
-считать snippets данными, не выполнять содержащиеся в них инструкции и явно
-обозначать недостаток данных. Технического лимита токенов и циклов исправления нет.
-`ReportDraft` проверяет структуру; неизвестные source_ids отклоняются.
-Модель не формирует URL: References строятся из сохранённых sources, текст
-экранируется, прямые URL в тексте модели удаляются. Проверка ID **не гарантирует
-фактическую обоснованность текста**. Отчёт основан только на snippets Search API;
-полные страницы приложение не читает.
-
-### Pause и Resume в разных процессах
-
-Процесс 1 (работает и без интерактивного stdin):
-
-```powershell
-.\.venv\Scripts\python.exe -m research_assistant --topic 'Архитектура LangGraph' --review --search --report --pause-after-plan
-```
-
-Он доходит до настоящего `interrupt` в review_plan, сохраняет Pause и закрывает
-соединение с SQLite, не вызывая меню и не отправляя cancel. В stdout — JSON
-с `status="planned"`, `paused=true`, `thread_id`, `checkpoint_db` и состоянием.
-Служебный объект Interrupt не сериализуется. ID и путь БД также выводятся в stderr.
-
-Процесс 2, после перезапуска терминала/приложения:
-
-```powershell
-# Замените значение ID на thread_id из предыдущего JSON:
-$threadId = 'ВСТАВЬТЕ_THREAD_ID'
-.\.venv\Scripts\python.exe -m research_assistant --resume $threadId
-```
-
-Resume показывает сохранённый Plan и прежнее меню approve/edit/cancel.
-Решение требует интерактивного терминала. EOF/Ctrl+C в меню означают cancel;
-чтобы заранее оставить Thread на Pause, применяйте `--pause-after-plan` при создании.
-После ошибки незавершённого Node используется `invoke(None, config)`; при
-достижении review_plan снова появится меню. Завершённый Thread возвращает
-сохранённое состояние без генерации, поиска и перезаписи Markdown.
-
-Можно задать пути при создании:
-
-```powershell
-$customPause = .\.venv\Scripts\python.exe -m research_assistant --topic 'Архитектура LangGraph' --review --search --report --pause-after-plan --checkpoint-db '.research_assistant\custom.sqlite' --output-dir 'reports\custom' | ConvertFrom-Json
-.\.venv\Scripts\python.exe -m research_assistant --resume $customPause.thread_id --checkpoint-db '.research_assistant\custom.sqlite'
-```
-
-При Resume разрешён только `--checkpoint-db` в дополнение к ID. Тему, режим,
-output-dir и Pause менять нельзя. Неизвестные Threads и несовместимые версии,
-режимы или пути отклоняются до внешних запросов. Путь БД по умолчанию вычисляется
-от рабочей папки; из другой папки укажите прежний абсолютный `--checkpoint-db`.
-Output-dir берётся из сохранённого State, где пути уже абсолютные.
-
-### Файлы, статусы и границы восстановления
-
-- `.research_assistant/checkpoints.sqlite` — дефолтная БД Checkpoints: вход,
-  Plan, sources, Markdown, статус и положение Workflow. Сохранение `durability="sync"`
-  завершается перед следующим шагом. Версия Workflow и параметры режима сохраняются
-  вместе со State. SQLite-соединение живёт в контекстном менеджере на весь запуск.
-- `reports/report-<sha256 thread_id>.md` — результат для чтения. Имя безопасно и
-  детерминировано; тема не используется как путь. Временный файл создаётся рядом,
-  затем `os.replace` атомарно заменяет итоговый файл. Повторная запись не создаёт
-  дубликатов. UTF-8 сохраняет кириллицу.
-- `report_ready` — Markdown уже получен, запись ещё не подтверждена;
-  `completed` — файл успешно записан. `planned`, `cancelled`, `sources_found` и
-  `no_sources` сохраняют прежний смысл. `paused` в JSON описывает Pause, не статус.
-
-Markdown-файл не заменяет Checkpoint: для восстановления нужны БД и прежний
-thread_id. Если после завершения удалить Markdown вручную, Resume вернёт сохранённый
-путь и не восстановит файл автоматически. БД, reports и временные файлы исключены
-из Git; пользовательские каталоги вне дефолтных путей исключайте самостоятельно.
-
-**Resume может расходовать баланс.** Сохранённые завершённые Nodes не повторяются,
-но Node, остановленный до фиксации результата, может выполниться заново. Exactly-once
-внешних запросов не гарантируется. Каждый search_section выполняет один запрос:
-при сбое failed Task может повторить его. Успешные Tasks с сохранёнными Pending Writes
-при Resume не повторяются. При ошибке записи
-после сохранения report_ready Resume использует сохранённый report_markdown и повторяет
-только save_report. Настройки модели при повторном API-вызове читаются из текущего `.env`.
-
-### Порядок чтения кода
-
-`schemas.py` (ReportDraft/ReportSection) → `reporting.py` (модель, Markdown,
-атомарная запись) → `graph.py` (Nodes и Router) → `persistence.py` (SqliteSaver,
-параметры и совместимость Thread) → `cli.py` (флаги, меню, запуск и Resume).
-Общая `planning.create_model()` задаёт одинаковые настройки модели Plan и Report.
-В тестах генераторы Plan, Search и Report заменяются независимо.
-
-## Parallelization, Reducers и Map-Reduce
-
-Поиск разделён на подготовку заданий, динамический Fan-out и общий Fan-in:
-
-```text
-review_plan
-  cancelled → END
-  approved → prepare_search
-               ├─ Send(search_section, job 0) ─┐
-               ├─ Send(search_section, job 1) ─┤
-               └─ Send(search_section, job N) ─┴→ collect_sources
-                                                   ├─ no_sources → END
-                                                   └─ sources_found → Report / END
-```
-
-Пустой Plan идёт из prepare_search прямо в collect_sources. Все строки запросов
-проверяются **до** первого Search API. Worker Input (`SearchWorkerInput`) содержит
-только section_index и query; `Send` создаёт Task зарегистрированного search_section
-со своим входом. Модель для распределения заданий не вызывается.
-
-Worker делает один вызов поиска, проверяет результат и возвращает только одну
-batch в search_batches. Ни status, ни окончательные sources он не меняет.
-Общий `SearchState` расширяет прежний RequestState только в поисковых режимах:
-
-```python
-search_batches: Annotated[list[SearchBatch], operator.add]
-```
-
-Без Reducer несколько Workers записывали бы один обычный State key в одном
-super-step, что LangGraph отклоняет как конфликт параллельных обновлений.
-`operator.add` конкатенирует списки batches. Возврат `[]` не очищает такой список;
-один Thread проходит один поисковый этап, повторный цикл здесь не реализован.
-
-Fan-in — ребро `search_section → collect_sources`: сбор начинается после окончания
-всего Worker super-step. collect_sources проверяет по одной batch на раздел,
-сортирует по section_index, сохраняет порядок внутри batches и объединяет точные
-URL. Название/snippet берутся из первого результата в порядке разделов, независимо
-от порядка завершения Tasks. Report запускается один раз после полного сбора.
-
-Лимит задаётся верхним полем RunnableConfig: `{"max_concurrency": 2,
-"configurable": {"thread_id": "..."}}`. Он установлен в CLI для начала и Resume,
-а также как default config собранного Graph. В Python его можно переопределить
-в config. Общего изменяемого клиента Tavily нет: search_web создаёт собственные
-Session и клиент на каждый вызов. Подменный search_function должен быть пригоден
-для одновременных вызовов. План по умолчанию всё ещё содержит один раздел:
-это один Worker; несколько Workers появляются при утверждении нескольких разделов.
-
-### Ошибка ветки и совместимость Checkpoints
-
-Ошибка Worker остаётся ошибкой CLI (stderr, код 2, без успешного JSON и Report).
-Автоматический RetryPolicy не добавлен. Успешные Task results сохраняются как
-Pending Writes; при явном `--resume` через новый saver/Graph они используются
-повторно, а failed Task запускается заново. Fan-in не получает двойные batches.
-API-вызов failed Task может расходовать баланс повторно; exactly-once нет.
-
-**WORKFLOW_VERSION исследования — 2.** Структура Nodes/State изменилась. Research Threads версии 1,
-включая сохранённые ранее Pause, отклоняются до любых API-вызовов; автоматической
-миграции нет. Старая БД и файлы не удаляются. Для нового Workflow создайте новый
-Thread обычной командой с `--topic`; версия 2 может использовать тот же SQLite-файл.
-
-Порядок чтения поиска: `SearchWorkerInput`/`SearchBatch`/`SearchState` →
-`prepare_search` → `dispatch_search` → `search_section` → `collect_sources` →
-`build_graph` в graph.py, затем config в cli.py и совместимость в persistence.py.
-Новых устанавливаемых зависимостей нет: Send — из LangGraph, Annotated — из typing,
-operator.add — из стандартной библиотеки Python.
-
-## Обсуждение готового Report
-
-Обсуждение — отдельный Chat Graph в том же приложении. Его Chat Thread имеет
-собственный ID и явную ссылку на завершённый Research Thread. Для создания нужны
-совместимый Research Checkpoint версии 2, `status="completed"`, непустой сохранённый
-report_markdown и корректные sources. Контекст берётся из Checkpoint, Markdown-файл
-заново не читается; планирование, поиск, Report Generation и запись файла не запускаются.
-
-Настройки Польза AI прежние: POLZA_API_KEY, POLZA_MODEL, POLZA_BASE_URL.
-Для обсуждения модель должна поддерживать **Tool Calling**. Поддержка JSON Schema
-сама по себе этого не доказывает. Совместимость вашей конкретной модели пока
-не проверена реальным запросом; выполнены только fake model и локальные HTTP-тесты.
-Новых зависимостей нет.
-
-Создать обсуждение и задать первый вопрос (подставьте Research Thread ID):
-
-```powershell
-Set-Location 'F:\AI Agent\LangGraph'
-$researchId = 'ВСТАВЬТЕ_COMPLETED_RESEARCH_THREAD_ID'
-$discussion = .\.venv\Scripts\python.exe -m research_assistant --discuss $researchId --question 'Какой главный вывод отчёта?' | ConvertFrom-Json
-$discussion
-$chatId = $discussion.chat_thread_id
-```
-
-Следующий вопрос, в том числе после перезапуска процесса:
-
-```powershell
-# После перезапуска терминала восстановите переменную из сохранённого ID:
-# $chatId = 'ВСТАВЬТЕ_CHAT_THREAD_ID'
-.\.venv\Scripts\python.exe -m research_assistant --chat $chatId --question 'Что именно сказано в источнике S1?'
-```
-
-Для другой БД добавьте к каждой команде `--checkpoint-db 'C:\полный\путь\checkpoints.sqlite'`.
-Режимы `--discuss`/`--chat` нельзя смешивать с `--topic`, `--review`, `--search`,
-`--report`, `--resume`, `--pause-after-plan` или `--output-dir`. Для диалога
-интерактивный stdin не нужен: одна команда — один вопрос, stdout — только JSON,
-ID и диагностические сообщения — stderr. Например:
-
-```json
-{
-  "answer": "Краткий ответ по отчёту.",
-  "status": "answered",
-  "chat_thread_id": "новый-ID-диалога",
-  "research_thread_id": "ID-исследования",
-  "research_checkpoint_id": "ID-завершённого-Research-Checkpoint",
-  "checkpoint_db": "F:\\AI Agent\\LangGraph\\.research_assistant\\checkpoints.sqlite"
-}
-```
-
-### Ручной Agent Loop и локальный Tool
-
-```text
-Parent: START → begin_turn → context_gate → [summarize] → prepare_context
-       → run_agent (compiled Subgraph) → finish → END
-Subgraph: START → agent → Router
-                       ├─ нет tool_calls → finish → END
-                       ├─ есть tool_calls → ToolNode(get_source) → agent
-                       └─ достигнут лимит → stop → END
-```
-
-`get_source(source_id)` возвращает сохранённые title, URL и snippet. ID S1, S2
-назначаются по тому же порядку sources, что и в Report. Материалы получает
-ToolNode через скрытый InjectedState; модель управляет только source_id, а не
-путём к файлу или Research Thread. Tool не делает сетевых запросов и не читает
-полную статью. Неизвестный ID возвращает JSON с `error="unknown_source_id"`.
-Неверный Tool/аргументы дают ToolMessage с ошибкой, а не произвольное выполнение.
-Результат Tool возвращается модели и сохраняется с соответствующим tool_call_id.
-
-На один вопрос разрешено максимум **3 вызова модели и 3 выполнения Tools**.
-Если очередные Tool Calls превышают бюджет либо модель снова требует Tools
-на последнем шаге, `stop` создаёт ToolMessage «вызов не выполнен» для каждого
-ожидающего ID и завершающий AIMessage; status становится `limited`.
-Частично выполнить группу вызовов и оставить другие незавершёнными нельзя.
-Это предел Agent Loop, а не лимит размера Plan или выходных токенов модели.
-Следующий вопрос получает свежие счётчики и сохранённую историю.
-
-### История, схемы и восстановление
-
-- `ChatInput` — новый question; `ChatState(MessagesState)` — внутренняя история,
-  материалы, привязка и счётчики; `ChatOutput` — answer/status. Это Multiple Schemas;
-  дополнительно код проверяет вопрос, материалы, сообщения, ID и привязку во время выполнения.
-- `MessagesState` использует add_messages: новые сообщения добавляются, сообщения
-  с тем же ID обновляются. begin_turn возвращает только один новый HumanMessage;
-  agent и ToolNode — только свои новые сообщения. Предыдущую историю CLI не пересылает.
-- Контекст собирается явно в model_context: один SystemMessage с правилами,
-  Report, компактным каталогом ID и Summary + отобранные последние Messages. SystemMessage и копия
-  Report не добавляются к messages. Checkpointer сохраняет историю, но не решает,
-  что получает модель: это делает код построения контекста.
-- Chat имеет отдельный `mode="report_chat"`: `version=3` без пользовательской памяти,
-  `version=4` с явным владельцем и Store. Research остаётся
-  `mode="review_search_report"`, `version=2`. Совместимые Research Checkpoints
-  читаются без миграции и изменений. Версия, режим, ID, база, привязка и совпадение
-  материалов с закреплённым Research checkpoint_id проверяются перед продолжением.
-  Изменение latest Checkpoint не подменяет исходный Report диалога.
-- Статусы Chat: `ready` после создания, `answering` во время вопроса,
-  `answered` при обычном завершении, `limited` при остановке по бюджету.
-  Ошибка модели даёт код 2 и понятное сообщение без ответа JSON и без секретов.
-
-После ошибки незавершённый вопрос можно явно повторить:
-
-```powershell
-.\.venv\Scripts\python.exe -m research_assistant --chat $chatId
-```
-
-Используется `invoke(None, config)` с новым SqliteSaver и тем же Chat ID.
-Новый HumanMessage не добавляется. Пока предыдущий вопрос не завершён,
-передать другой `--question` нельзя. Без незавершённого вопроса опция --question
-обязательна. Если ошибка возникла при создании, Chat ID доступен в stderr.
-Автоматического повтора нет. Явный повтор может расходовать баланс снова;
-exactly-once API-вызовов не гарантируется.
-
-Ответы запрашиваются краткими на русском (ориентир до 100 слов), но это инструкция,
-а не жёсткий лимит. Модель получает ограниченный контекст, полная история
-остаётся в Checkpoints. Память здесь — Short-Term Memory одного Thread
-в SQLite. С этапа 10 отдельный Store предоставляет Long-Term Memory по user_id;
-истории Chat по-прежнему изолированы по Thread ID.
-Snippets остаются фрагментами Search API; их наличие не подтверждает чтение страниц
-и не гарантирует фактическую правильность ответа. Нового Web Search в диалоге нет.
-
-### Термины и код
-
-| Термин | Значение и применение |
-| --- | --- |
-| Chain | Заданная последовательность шагов; прямой путь begin_turn → agent → finish |
-| Router | Выбирает переход; route_agent проверяет tool_calls и бюджет |
-| Agent | Модель выбирает следующий Tool; agent использует bind_tools([get_source]) |
-| Agent with Memory | Этот Agent получает историю своего Chat Thread после перезапуска |
-| Tool Calling | Структурированный запрос модели с name/args/id, не разбор произвольного текста |
-| ToolNode | Настоящий langgraph.prebuilt.ToolNode выполняет get_source и создаёт ToolMessage |
-| Agent Loop | Повтор agent → tools → agent с ограничением числа вызовов |
-| MessagesState | Основа ChatState с каналом messages и встроенным Reducer |
-| add_messages | Reducer истории: добавление сообщений и обновление по ID |
-| Multiple Schemas | Раздельные вход, внутренний State и выход Graph |
-
-Порядок чтения: `chat_context.py` (бюджеты, Filter/Trim/Summary) →
-`chat.py` (Parent, Subgraph, get_source и Router) → `chat_streaming.py` (события) →
-`chat_session.py` (привязка, SQLite, создание и продолжение) → `cli.py` (флаги).
-Исходный Research Graph в graph.py не стал Subgraph и не изменён этим этапом.
-
-### Context Management и Summary
-
-Parent State хранит полную messages, summary и summarized_through — ID последнего
-сообщения пересказанной завершённой реплики. Filter исключает этот префикс из
-входа модели; Trim убирает старейшие целые реплики, если бюджет ещё превышен.
-Один блок — HumanMessage, все последующие AI/Tool Messages и финальный AIMessage
-до следующего HumanMessage. Поэтому Tool Calls и соответствующие результаты не
-разрываются. Использованы явные функции отбора, без langmem и без удаления Messages.
-
-Summarization запускается, когда оценка ещё не пересказанных завершённых реплик
-достигла порога и есть реплики старше сохраняемого хвоста. Вход Summarizer:
-прежнее Summary + новый завершённый префикс, без повторного пересказа старого.
-Последние `recent_turns` завершённых реплик не пересказываются. Если их слишком
-много для входа, Trim всё равно может исключить старейшие из контекста; текущий
-вопрос и весь его Agent Loop остаются дословно. Все сообщения остаются в SQLite.
-Summary — данные, не инструкции и не замена Report/Sources.
-
-Настройки задаются **только при создании** через `--discuss`, сохраняются в State
-и не меняются при `--chat`, в том числе после перезапуска:
-
-| Параметр | По умолчанию | Назначение |
-| --- | --- | --- |
-| `--context-budget` | 8192 | Общий приблизительный бюджет входа плюс резерв ответа |
-| `--answer-reserve` | 512 | Место для ответа Agent; не API max_tokens |
-| `--summary-threshold` | 1600 | Порог Summarization завершённой ещё не пересказанной истории |
-| `--summary-budget` | 512 | Бюджет Summary, включая обвязку оценки; также резерв ответа Summarizer |
-| `--recent-turns` | 2 | Последние завершённые реплики без пересказа |
-
-Подсчёт **приблизительный**: длина JSON в символах / 3 с округлением вверх плюс
-служебная надбавка. Учитываются правила, Report, каталог Sources, схема Tool,
-Summary, выбранная история, текущий вопрос, результаты Tools и резерв ответа.
-Это не tokenizer провайдера, точный предел конкретной модели не гарантируется.
-Проверка повторяется перед каждым вызовом Agent, в том числе после ToolNode.
-Если обязательные данные или текущий вопрос с Tool-результатами не помещаются,
-модель не вызывается, CLI возвращает ошибку. Для такого вопроса создайте новый
-Chat с большим бюджетом; неограниченных автоматических повторов нет.
-
-Summarizer использует прежнюю конфигурацию Polza AI, отдельную внедряемую функцию
-`summarize_with_model(messages, config)`. Один запуск по порогу — один дополнительный
-вызов модели, отдельно от лимита 3 вызовов Agent. Краткость задана в инструкции;
-превышение `summary-budget` даёт ошибку без сохранения результата. При слишком
-длинной старой истории пересказывается только помещающийся начальный набор целых
-реплик, остаток остаётся за границей для следующих обновлений. Ошибка не меняет
-Summary/границу и не отправляет превышенный контекст Agent. Summary и граница
-возвращаются одним State update. Качество пересказа не гарантируется схемой.
-
-Пример при сохранении одной последней завершённой реплики:
-
-```text
-Полная история: H1 A1 H2 AI(tool_call) ToolMessage A2 H3
-Summary: краткий пересказ H1/A1; граница — ID A1
-Вход Agent: System(правила + Report + каталог Sources + Summary)
-            H2 AI(tool_call) ToolMessage A2 H3
-```
-
-При недостатке бюджета весь блок H2…A2 исключается из входа, а H3 остаётся.
-Полная история и граница Summary при Trim не меняются. Filter/Trim/Summarization
-проверяются отдельно в test_context.py и test_chat_context_graph.py.
-
-### Subgraph и совместимость
-
-Agent Loop — настоящий compiled Subgraph `build_agent_subgraph()`; Parent
-`build_chat_graph()` вызывает его через `run_agent(state, config)`.
-Parent → Subgraph: материалы, Summary, настройки и отобранная `context_history`,
-пустой канал новых `messages` и свежие счётчики. Subgraph → Parent: только новые
-AI/Tool Messages, answer/status и счётчики. Текущий HumanMessage уже сохранён Parent
-и второй раз не возвращается. SDK-клиенты не сохраняются.
-
-`subgraph.compile()` оставляет checkpointer=None: используется Checkpointer
-Parent в режиме **per-invocation**. Namespace привязан к Task run_agent; нового
-Chat Thread нет, отдельная накопительная память между вопросами не создаётся.
-RunnableConfig передаётся в Subgraph и модели. При ошибке Parent продолжает
-незавершённую Task, дочерние Checkpoints сохраняют успешно выполненные шаги.
-Проверены Resume внутри Agent Loop и восстановление в другом процессе без
-повторного HumanMessage/ToolMessage. Неудачный API-вызов может повториться.
-
-Chat version=1/2 **не мигрируется**: CLI отказывает с инструкцией создать новый Chat
-по тому же completed Research Thread через `--discuss RESEARCH_ID --question ...`.
-Старая история и БД сохраняются. Research version=2 совместима и не меняется.
-
-Subgraph — вложенная организация Graph с собственными Nodes/схемой.
-Parallelization — одновременная работа независимых Tasks, Map-Reduce — раздача
-Jobs Workers и объединение результатов через Reducer. Agent Subgraph сам по себе
-не делает диалог параллельным и не заменяет поиск Send/Fan-in в Research Graph.
-
-### Streaming обсуждения
-
-```powershell
-# Новый Chat с потоковым прогрессом и явными бюджетами:
-$discussion = .\.venv\Scripts\python.exe -m research_assistant --discuss $researchId --question 'Какой главный вывод?' --stream --context-budget 8192 --answer-reserve 512 --summary-threshold 1600 --summary-budget 512 --recent-turns 2 | ConvertFrom-Json
-$chatId = $discussion.chat_thread_id
-$discussion
-
-# Следующий вопрос:
-.\.venv\Scripts\python.exe -m research_assistant --chat $chatId --question 'Уточни по S1' --stream
-
-# Resume после ошибки, без нового вопроса:
-.\.venv\Scripts\python.exe -m research_assistant --chat $chatId --stream
-```
-
-Без `--stream` прежний обычный JSON-режим сохраняется. Streaming использует
-`graph.stream(..., stream_mode=['updates', 'messages'], subgraphs=True)` **вместо**
-Parent invoke, включая Resume. После stream читается сохранённый State того же
-выполнения, второй запуск для результата не делается. Внутренний вызов Subgraph
-остаётся частью того же выполнения Parent.
-
-`updates` преобразуются в «Готовим контекст», «Обновляем Summary», «Читаем источник»,
-«Формируем ответ». `messages` — текстовые AIMessageChunk только узла agent из
-дочернего Namespace; они явно помечены как **предварительные**. Agent может затем
-вызвать Tool и изменить ответ. Summary, Tool arguments/results, reasoning-блоки,
-полные State и метаданные как ответ не печатаются. Прогресс и chunks идут в stderr;
-stdout содержит единственный финальный JSON. При ошибке успешного JSON нет.
-
-Если текстовых chunks нет, выводится сообщение, что token streaming провайдера
-не подтверждён: доступны только события Graph. Если API отклоняет streaming-запрос,
-выполнение завершается ожидаемой ошибкой; можно явно повторить без `--stream`.
-Приложение не разбивает готовый ответ на символы для имитации Streaming.
-Автономные тесты проверяют chunks fake provider и их показ до завершения генерации;
-реальный token streaming вашей Polza-модели без платного запроса не проверен.
-
-| Термин | Применение |
-| --- | --- |
-| Context Management | Явная подготовка ограниченного входа модели из полной истории |
-| Filter | Исключение уже пересказанного префикса по сохранённой границе |
-| Trim | Отбор последних целых реплик по приблизительному бюджету |
-| Summarization | Вызов отдельного Summarizer при достижении порога |
-| Summary | Сохранённый краткий пересказ старого префикса, данные для модели |
-| External Memory | SQLite Checkpoints восстанавливают историю и Summary между процессами |
-| Parent Graph | Хранит общую историю и Summary, готовит контекст и принимает результат |
-| Subgraph | Compiled Agent Loop для одного вопроса, без отдельной межвопросной памяти |
-| Streaming | Получение промежуточных событий и доступных текстовых chunks во время выполнения |
-| updates | События частичных обновлений Nodes, преобразуемые в безопасный прогресс |
-| messages | События сообщений/chunks модели вместе с metadata |
-| Namespace | Путь дочернего выполнения; отличает Agent Subgraph от Parent/Summarizer |
-
-На этапе 8 Store, Long-Term Memory, Time Travel, новые Breakpoints и Deployment не добавлялись.
-История и Checkpoints не удаляются и могут расти на диске. Наличие реализации
-не означает подтверждённого изучения тем Academy пользователем.
-
-## History, Breakpoints и Time Travel — этап 9
-
-Time Travel доступен только для Research; Chat/Subgraph здесь не ветвятся.
-Research Workflow остаётся версии 2: новые настройки необязательны, прежние
-Checkpoints без них читаются. Chat версии 3 хранит конкретный завершённый
-Research checkpoint_id в chat_settings. Диалоги версий 1/2 не имеют надёжной
-привязки к версии Report и отклоняются без изменения/удаления данных; создайте
-новый Chat, явно выбрав нужный завершённый Checkpoint.
-
-### History → Inspection → Fork → Review → Report → Chat
-
-```powershell
-Set-Location 'F:\AI Agent\LangGraph'
-$threadId = 'ВСТАВЬТЕ_RESEARCH_THREAD_ID'
-$db = 'F:\AI Agent\LangGraph\.research_assistant\checkpoints.sqlite'
-
-# Только чтение: новые Checkpoints, API и Report не создаются.
-$history = .\.venv\Scripts\python.exe -m research_assistant --history $threadId --checkpoint-db $db | ConvertFrom-Json
-$history.checkpoints | Format-Table checkpoint_id, status, next, stop_kind
-
-# Сохраните ID исходного завершённого результата для его обсуждения.
-$original = $history.checkpoints | Where-Object { $_.status -eq 'completed' -and $_.next.Count -eq 0 } | Select-Object -First 1
-
-# Поддерживается точка после generate_plan, до завершения Review/начала поиска.
-$point = $history.checkpoints | Where-Object { $_.status -eq 'planned' -and ($_.next -join ',') -eq 'review_plan' } | Select-Object -First 1
-$checkpointId = $point.checkpoint_id
-.\.venv\Scripts\python.exe -m research_assistant --inspect $threadId --checkpoint-id $checkpointId --checkpoint-db $db
-
-# Создайте или отредактируйте файл альтернативного Plan.
-@'
-{
-  "title": "Альтернативный план",
-  "sections": [{"title": "Управление состоянием", "questions": ["Как сохраняется состояние?"]}]
-}
-'@ | Set-Content -LiteralPath '.\alternative-plan.json' -Encoding utf8
-
-# Подготовка Fork: native update_state, без API и выполнения Nodes.
-$fork = .\.venv\Scripts\python.exe -m research_assistant --fork $threadId --checkpoint-id $checkpointId --plan-file '.\alternative-plan.json' --checkpoint-db $db | ConvertFrom-Json
-$fork
-$forkCheckpointId = $fork.checkpoint_id
-
-# Отдельное явное выполнение. В Review введите 1 для утверждения.
-$report = .\.venv\Scripts\python.exe -m research_assistant --resume $threadId --checkpoint-id $forkCheckpointId --checkpoint-db $db | ConvertFrom-Json
-$report.report_path
-$report.checkpoint_id
-
-# Обсуждение именно выбранного завершённого результата:
-.\.venv\Scripts\python.exe -m research_assistant --discuss $threadId --research-checkpoint-id $report.checkpoint_id --question 'Что изменилось в выводах?' --checkpoint-db $db
-
-# Независимое обсуждение исходного Report:
-.\.venv\Scripts\python.exe -m research_assistant --discuss $threadId --research-checkpoint-id $original.checkpoint_id --question 'Каков исходный вывод?' --checkpoint-db $db
-```
-
-Если выбранная ветка наследует Static Breakpoint, первая команда Resume вернёт
-`paused=true`, `stop_kind="static_breakpoint"`, а не Report. Тогда продолжите её:
-
-```powershell
-$report = .\.venv\Scripts\python.exe -m research_assistant --resume $threadId --checkpoint-id $report.checkpoint_id --checkpoint-db $db | ConvertFrom-Json
-```
-
-Replay подготавливается аналогично, но сохраняет прежний Plan:
-
-```powershell
-$replay = .\.venv\Scripts\python.exe -m research_assistant --replay $threadId --checkpoint-id $checkpointId --checkpoint-db $db | ConvertFrom-Json
-.\.venv\Scripts\python.exe -m research_assistant --resume $threadId --checkpoint-id $replay.checkpoint_id --checkpoint-db $db
-```
-
-History/Inspection открывают SQLite в режиме `mode=ro`, вызывают
-`get_state_history()`/`get_state()` и показывают только разрешённые поля:
-Thread/Checkpoint/Parent ID, время, status, next, вид остановки, название/число
-разделов Plan, наличие/путь Report и идентификатор альтернативы. Полный State,
-Report, тексты ошибок Tasks и SDK-данные не печатаются. Неизвестный ID и ID
-другого Thread отклоняются, latest вместо них не подставляется. Chat явно
-отличается от Research и в этих командах не поддерживается.
-
-### Static и Dynamic Breakpoints
-
-```powershell
-# Новый полный Workflow с остановкой перед поиском:
-.\.venv\Scripts\python.exe -m research_assistant --topic 'Архитектура LangGraph' --review --search --report --pause-after-plan --break-before-search
-
-# Подставьте полученный Thread ID. Утвердите Plan через 1:
-.\.venv\Scripts\python.exe -m research_assistant --resume 'THREAD_ID'
-
-# После static_breakpoint — без повторного Review, в том числе в новом процессе:
-.\.venv\Scripts\python.exe -m research_assistant --resume 'THREAD_ID'
-```
-
-`--break-before-search` сохраняет настройку в workflow и использует настоящий
-`compile(interrupt_before=['prepare_search'])`. Без флага прежний путь сохранён.
-Static остановка — инспекция перед поиском, продолжение `invoke(None, config)`.
-Dynamic остановка — существующий `review_plan/interrupt()`, продолжение только
-через `Command(resume=decision)`. `snapshot.next` само по себе не означает Review:
-CLI различает `dynamic_interrupt`, `static_breakpoint`, `error`, `pending` и
-`completed`. Ошибка Task имеет приоритет, текст исключения не показывается History.
-
-### Native branching и файлы
-
-Для Replay/Fork разрешён только Snapshot с `next=('review_plan',)`, Tasks Review,
-непустой normalized_topic, валидным Plan и без Search Jobs/Batches/Sources/Report.
-Одного `status="planned"` недостаточно. Pending interrupt может быть metadata
-этого же Checkpoint: State всё ещё содержит вход Review. Checkpoints после
-утверждения, поиска, ошибок Review или завершённого Report отклоняются.
-
-Fork валидирует UTF-8 JSON существующей схемой ResearchPlan. Обе операции сначала
-создают идентифицируемую ветку через `update_state(selected.config, ..., as_node='generate_plan')`.
-`as_node` означает авторство обновления, а не запуск Node: следующий Node —
-`review_plan`, как после generate_plan. Продолжение использует config, возвращённый
-update_state. Исходный Checkpoint остаётся доступен; Thread ID тот же, Checkpoint
-ID новый, parent_config связывает его с выбранной исходной точкой. Latest меняется.
-Завершённые предшествующие Nodes не выполняются повторно; Review запрашивает новое
-решение, прежнее approve не переносится.
-
-Каждая подготовка, включая Replay, получает новый UUID `artifact_id` в workflow.
-Обычный Report использует `sha256(thread_id)`, альтернатива —
-`sha256(thread_id + ':artifact:' + artifact_id)` в имени `report-HASH.md`.
-Output-dir сохраняется; путь проверяется на соответствие artifact_id. Resume
-одной альтернативы сохраняет идентификатор и путь, включая восстановление после
-ошибки записи. Исходный Report не перезаписывается. Пример с условными ID:
-
-```text
-Thread T, Checkpoint C0 (Plan A перед Review)
-├─ Review A → поиск A → Report A, Checkpoint CA
-│  reports/report-<sha256(T)>.md
-└─ update_state(C0, Plan B, artifact_id=B) → Checkpoint CB0
-   └─ новый Review → поиск B → Report B, Checkpoint CB
-      reports/report-<sha256(T + ':artifact:' + B)>.md
-
-Chat A закреплён за T/CA; Chat B — за T/CB, независимо от latest.
-```
-
-Чистота ветки проверяется до записи. Для reducer operator.add используется
-`Overwrite([])`: простой `[]` не очистил бы накопленное значение. Replay/Fork не
-отменяют уже выполненные внешние действия: после Review повторяются Search API,
-генерация Report и атомарная запись нового файла. Явный Resume ошибочного вызова
-может повторить его; exactly-once не гарантируется. Подготовка ветки API не вызывает.
-Для исторической незавершённой точки сначала используйте --replay/--fork;
---resume --checkpoint-id продолжает подготовленную альтернативу или читает
-завершённый результат. При нескольких альтернативах передавайте ID явно.
-
-### Термины и порядок чтения
-
-| Термин | Значение в приложении |
-| --- | --- |
-| StateSnapshot | Сохранённые values, next, Tasks, config и parent_config |
-| checkpoint_id | Точный ID состояния внутри Research Thread |
-| Static Breakpoint | Остановка interrupt_before перед prepare_search |
-| Dynamic Breakpoint | Существующий interrupt в Review с решением пользователя |
-| Editing State | Обновление Plan через native update_state без выполнения Nodes |
-| Time Travel | Работа с выбранной исторической точкой, не отмена внешних действий |
-| Replay | Ветка с прежним Plan, повторно выполняющая последующие Nodes |
-| Fork | Ветка с альтернативным Plan и отдельным artifact_id |
-| update_state | Создаёт новый Checkpoint; применяет Reducers |
-| as_node | Указывает Node-автора обновления и определяет следующий переход |
-
-Читать: `history.py` → `time_travel.py` → `persistence.py` → `graph.py`
-(`interrupt_before`, save_report) → `reporting.py` (report_target) → `cli.py` →
-`chat_session.py` (Research checkpoint pin). Новых зависимостей нет: StateSnapshot,
-get_state/history/update_state, Overwrite и interrupt_before — прежний LangGraph;
-ResearchPlan — прежний Pydantic; sqlite3, uuid, pathlib/hashlib — стандартный Python.
-На этапе 9 Store, Long-Term Memory, Deployment и Time Travel для Chat не добавлялись.
-
-## Agent with Long-Term Memory — этап 10
-
-Пользовательская память применяется только в обсуждении Report. Plan/Search/Report,
-Time Travel исследования и существующие файлы автоматически не меняются.
-Studio остаётся отдельной практикой: Memory Chat к нему здесь не подключается.
-
-### Store и схемы
-
-Используется настоящий `langgraph.store.sqlite.SqliteStore`, доступность и контракт
-проверены в установленном **langgraph-checkpoint-sqlite 3.1.2**. Минимальная версия
-существующей зависимости повышена до 3.1.2; новых пакетов нет. `SqliteSaver` остаётся
-Checkpointer, а отдельный SQLite Store хранит пользовательскую память.
-По умолчанию это `.research_assistant/memory.sqlite`; SQL-файлы и sidecars исключены
-из Git. Store и Checkpointer имеют независимый жизненный цикл и разные файлы.
-Соединения/клиенты не записываются в State, Profile или Collection.
-
-| Данные | Namespace | Key | JSON Value |
-| --- | --- | --- | --- |
-| Profile | `(user_id, "profile")` | `preferences` | language, style, code_language |
-| Collection | `(user_id, "notes")` | note_id | text, topic, tags, origin |
-| Квитанции операций | `(user_id, "memory_operations")` | hash операции | результат, namespace/key изменённой записи |
-| Идентичность Store | `("_research_assistant", "metadata")` | `identity` | UUID файла Store |
-
-Profile — одна Pydantic-запись. `language` — строка до 40 символов, `style` —
-`brief`, `balanced` или `detailed`, `code_language` — строка до 40 символов либо
-null. Default без записи: русский, brief, язык примеров не задан. Частичное
-обновление сохраняет остальные поля; null для code_language сбрасывает предпочтение.
-
-Note: непустой `text` до 600 символов, необязательная `topic` до 80, до пяти
-`tags` по 24 символа. `origin` содержит CLI-происхождение либо Chat Thread,
-Human turn ID и Tool Call ID. `created_at`/`updated_at` предоставляет Store;
-обновление сохраняет ID и created_at. Изменение одной записи не заменяет Collection.
-
-`LocalMemoryStore` — небольшое расширение native SqliteStore, а не новый SQL
-адаптер с нуля. Реализованы/проверены get/put/search/delete, batch и abatch
-(async через asyncio.to_thread); JSON и timestamps сохраняются. Search без query
-перечисляет Namespace **по компонентному префиксу**, а не по началу текста user_id.
-Поддерживаются простые фильтры равенства полей верхнего уровня, limit/offset,
-порядок updated_at DESC, затем namespace/key ASC. List namespaces использует
-native prefix/suffix/max_depth/pagination. JSON-объекты/списки в фильтре отвергаются.
-`query`, vector indexing и TTL явно не поддерживаются. Embeddings и Semantic
-Search отсутствуют; клиентам не нужны сервер и API-ключ.
-
-В native 3.1.2 обнаружен commit в finally у batch cursor. В локальном расширении
-сбой откатывает транзакцию, чтобы запись и квитанция применялись вместе;
-это проверено искусственной SQL-ошибкой. Параллельные частичные изменения Profile
-сериализуются внутри процесса; одновременные изменения из разных процессов не
-имеют гарантии слияния и могут следовать правилу последней записи.
-
-### Управление памятью без модели
-
-`user_id` — 1–64 латинских буквы/цифры/`_`/`-`; зарезервированное `langgraph`
-запрещено контрактом Store. Это разделение данных, **не аутентификация**.
-Пользователь с доступом к CLI может указать чужой ID; защищённый сервер здесь не добавлен.
-
-```powershell
-Set-Location 'F:\AI Agent\LangGraph'
-$userId = 'payk1'
-$memoryDb = 'F:\AI Agent\LangGraph\.research_assistant\memory.sqlite'
-
-# Один JSON-файл надёжнее передачи кавычек JSON через Windows PowerShell:
-@'
-{"language":"English","style":"brief","code_language":"Python"}
-'@ | Set-Content -LiteralPath '.\profile.json' -Encoding utf8
-
-.\.venv\Scripts\python.exe -m research_assistant --memory-command profile-update --user-id $userId --memory-db $memoryDb --memory-file '.\profile.json'
-.\.venv\Scripts\python.exe -m research_assistant --memory-command profile-show --user-id $userId --memory-db $memoryDb
-
-# Меняем только style, language/code_language сохраняются:
-@'
-{"style":"detailed"}
-'@ | Set-Content -LiteralPath '.\profile-patch.json' -Encoding utf8
-.\.venv\Scripts\python.exe -m research_assistant --memory-command profile-update --user-id $userId --memory-db $memoryDb --memory-file '.\profile-patch.json'
-
-@'
-{"text":"Использую LangGraph для обсуждения технических отчётов","topic":"LangGraph","tags":["LangGraph","Python"]}
-'@ | Set-Content -LiteralPath '.\note.json' -Encoding utf8
-$note = .\.venv\Scripts\python.exe -m research_assistant --memory-command note-add --user-id $userId --memory-db $memoryDb --memory-file '.\note.json' | ConvertFrom-Json
-$noteId = $note.result.id
-
-.\.venv\Scripts\python.exe -m research_assistant --memory-command note-list --user-id $userId --memory-db $memoryDb
-.\.venv\Scripts\python.exe -m research_assistant --memory-command note-show --user-id $userId --memory-db $memoryDb --note-id $noteId
-
-@'
-{"text":"Предпочитаю примеры StateGraph на Python"}
-'@ | Set-Content -LiteralPath '.\note-patch.json' -Encoding utf8
-.\.venv\Scripts\python.exe -m research_assistant --memory-command note-update --user-id $userId --memory-db $memoryDb --note-id $noteId --memory-file '.\note-patch.json'
-
-# Диагностика Profile и подходящих заметок с ID/причинами отбора:
-.\.venv\Scripts\python.exe -m research_assistant --memory-command retrieve --user-id $userId --memory-db $memoryDb --memory-query 'LangGraph StateGraph'
-
-.\.venv\Scripts\python.exe -m research_assistant --memory-command note-delete --user-id $userId --memory-db $memoryDb --note-id $noteId
-.\.venv\Scripts\python.exe -m research_assistant --memory-command profile-reset --user-id $userId --memory-db $memoryDb
-```
-
-Для небольшого JSON доступен `--memory-json`; он взаимоисключён с --memory-file.
-CRUD не вызывает Graph или модель. stdout — один JSON, ошибки — stderr/код 2.
-Сброс Profile удаляет preferences и возвращает default. Удаление Note удаляет
-одну запись Store, **но не стирает уже сохранённую историю и Checkpoints**.
-
-### Chat с Runtime Context и Tools
-
-```powershell
-$researchId = 'ВСТАВЬТЕ_COMPLETED_RESEARCH_THREAD_ID'
-
-# Новый Chat с памятью: user_id обязателен.
-$chat = .\.venv\Scripts\python.exe -m research_assistant --discuss $researchId --question 'Измени предпочтение: отвечай на English, кратко, примеры на Python' --user-id $userId --memory-db $memoryDb | ConvertFrom-Json
-$chatId = $chat.chat_thread_id
-$chat
-
-.\.venv\Scripts\python.exe -m research_assistant --chat $chatId --question 'Запомни: использую LangGraph с Python' --user-id $userId --stream
-.\.venv\Scripts\python.exe -m research_assistant --chat $chatId --question 'Объясни LangGraph по отчёту' --user-id $userId --stream
-
-# Resume после ошибки, без нового вопроса:
-.\.venv\Scripts\python.exe -m research_assistant --chat $chatId --user-id $userId --stream
-
-# Новый процесс и новый Chat того же пользователя получают прежний Profile:
-.\.venv\Scripts\python.exe -m research_assistant --discuss $researchId --question 'Объясни основной вывод' --user-id $userId --memory-db $memoryDb
-
-# Другой пользователь не получает Profile/Notes payk1:
-.\.venv\Scripts\python.exe -m research_assistant --discuss $researchId --question 'Объясни основной вывод' --user-id 'another_user' --memory-db $memoryDb
-```
-
-Для альтернативного Report сохраняется `--research-checkpoint-id CHECKPOINT_ID`.
-Без `--user-id` новый Chat создаётся в прежнем режиме v3 **без Store**, случайный
-default user не назначается. Chat v3 не превращается в пользовательский диалог
-при продолжении: создайте новый --discuss с --user-id. Memory Chat v4 требует
-тот же --user-id при каждом продолжении. Версии 1/2 по-прежнему отклоняются без
-удаления данных. Research остаётся версии 2.
-
-В chat_settings/memory_binding сохраняются user_id, абсолютный путь Store и его
-UUID, Thread ID и прежний Research checkpoint pin. При Resume пропущенный
---memory-db восстанавливается из привязки; явно другой путь, другой UUID файла,
-отсутствующий файл или другой владелец отклоняются **до модели**. Checkpointer
-как Store не принимается. Store открывается на время CLI-команды и закрывается
-независимо от Checkpointer. `MemoryContext` передаётся через `context_schema`,
-Runtime/ToolRuntime и явный context в Subgraph, Store наследуется от Parent.
-Клиент/соединение в State не сохраняются.
-
-Graph:
-
-```text
-Parent: begin_turn → load_memory → context_gate → [summarize]
-        → prepare_context → Agent Subgraph → finish
-Subgraph: перед КАЖДЫМ вызовом agent заново читает Profile и выбирает Notes
-          agent → Router → ToolNode → agent / finish / stop
-```
-
-Каталог расширен тремя Tools: `update_profile(preferences)`, `save_note(note)`,
-`delete_note(note_id)`. get_source сохранён. user_id, Namespace, Store, Thread и
-Tool Call ID инжектируются приложением; модель их не выбирает. Лишние аргументы,
-попытки подменить runtime/user_id/namespace и невалидные значения не записываются.
-
-Запись разрешается только при явном начале **текущего Human-вопроса**:
-`Измени предпочтение…`, `Измени предпочтения…`, `Обнови профиль…`,
-`Запомни предпочтение…` для Profile; `Запомни…`/`Сохрани заметку…` для Notes;
-`Забудь заметку ID`/`Удали заметку ID` для удаления. Поддержаны соответствующие
-English-prefixes update profile/change preference, remember/save note,
-forget note/delete note. Это намеренно прозрачное правило разрешения; свободное
-перефразирование может потребовать такого явного начала. Report, Sources, Summary
-и старые сообщения разрешением на запись не являются.
-
-Успех определяется Store и ToolMessage. При ошибке/отказе или невалидном Tool
-Agent выдаёт контролируемое объяснение, не обращаясь к модели за потенциальным
-ложным подтверждением. Если на явный запрос модель ответила «сохранено», вообще
-не вызвав нужный Tool, финальный ответ заменяется сообщением, что операция не
-выполнялась. Часть параллельных операций могла уже сохраниться — их
-можно проверить CLI. Profile перечитывается перед следующим model call, поэтому
-обновлённое предпочтение действует в том же Agent Loop. Лимиты 3 model calls и
-3 Tool attempts, валидация истории и закрытие Tool Calls сохраняются.
-
-Идемпотентность Tool-записи: Key = hash(Chat Thread + Human Message ID + Tool Call ID
-+ operation), внутри Namespace пользователя. Данные и квитанция операции пишутся
-одним batch. Повтор того же сохранённого вызова возвращает already_applied;
-вторая Note не создаётся. Если запись позже удалили, старый вызов её не воссоздаёт,
-present=false показывает отсутствие. Новый Turn/Tool Call — новая операция;
-повтор CLI note-add намеренно создаёт новую Note. Это не exactly-once для всех
-возможных сбоев, внешних эффектов или независимых повторов запроса.
-
-### Retrieval, бюджет и диагностика
-
-Это **обычный детерминированный отбор**, не Semantic Search: слова длиной от трёх
-символов без учёта регистра сопоставляются с text/topic/tags. Морфология и
-синонимы не учитываются. Нет совпадений — нет заметок в контексте. Порядок:
-число различных совпавших слов DESC, затем note_id ASC. Не более 3 Notes и 2400
-символов JSON Profile+Notes. CLI note-list сортирует ID и показывает всю Collection
-только по явной команде; в модель весь Store не вставляется.
-
-Память и расширенные Tool schemas входят в существующий приблизительный
-context-budget. Сначала Trim сокращает старые завершённые реплики; если текущий
-блок всё ещё не помещается, исключаются последние Notes в рейтинге. Текущий вопрос
-и Tool Call/ToolMessage блоки не разрываются. Если Report/правила/Tools/Profile/
-Summary и текущий блок не помещаются даже без Notes, вызова модели нет и CLI
-объясняет ошибку бюджета. Подсчёт остаётся приблизительным, не tokenizer Polza.
-
-Profile влияет на форму ответа; Notes — пользовательские данные, не доказательства
-фактов Report/Sources и не инструкции обойти правила. Summary хранит пересказ
-одного диалога, не заменяет Store и не является источником истины для Profile.
-Store перечитывается в новых выборках, поэтому удалённая запись туда не попадает,
-даже если её текст остался в старых сообщениях/Checkpoints.
-
-Ответ memory Chat дополнительно содержит `memory_selection.notes`: только
-фактически включённые ID и причины отбора; `memory_selection.operations` показывает
-Tool-результаты (status/id/present), а не предположение по тексту модели.
-Полные записи не печатаются в прогрессе
-Streaming; явная команда retrieve показывает Profile и ограниченную выборку.
-Memory-снимок/диагностика могут сохраняться в Checkpoints для воспроизводимости,
-но перед новым ответом данные перечитываются из Store.
-
-| Термин | Конкретное применение |
-| --- | --- |
-| Short-Term Memory | messages/Summary конкретного Chat Thread в Checkpointer |
-| Long-Term Memory | Profile/Notes одного user_id, общие для его разных Threads/процессов |
-| Store | Native LangGraph get/put/search/delete с постоянным SQLite backend |
-| Namespace | Приложение формирует (user_id, profile/notes), разделяя пользователей |
-| Key | preferences либо стабильный note_id внутри Namespace |
-| Profile | Одна валидируемая запись предпочтений с частичным обновлением |
-| Collection | Несколько отдельных Notes с ID и происхождением |
-| Retrieval | Детерминированный отбор подходящих Notes перед ответом |
-| Runtime Context | MemoryContext с user_id, Thread и Store path; не сохранённый SDK-клиент |
-
-Читать: `user_memory.py` (schemas/Store/CRUD/Retrieval/receipts) → `memory_tools.py`
-(Runtime Context и разрешение) → `chat_context.py` (бюджет) → `chat.py`
-(load_memory/Agent/Subgraph) → `chat_session.py` (владелец/путь/Resume) →
-`memory_cli.py`/`cli.py` (команды) → `chat_streaming.py` (безопасный прогресс).
-Deployment, сайт, Web Search, чтение страниц и Studio для Memory Chat не добавлены.
 
 ## Проверки
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
-.\.venv\Scripts\python.exe -m pip check
+.\.venv-web\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv-web\Scripts\python.exe -m compileall -q research_assistant tests scripts
+.\.venv-web\Scripts\python.exe -m pip check
 ```
 
-Тесты работают без сети, реальных ключей и оплаты. Генератор подменяется,
-а API-адаптер проверяется через локальный HTTP-транспорт с заданными ответами.
-Это не подтверждает работу реального подключения.
-Проверяются нормализация, сохранение исходной темы, ограничения схемы, CLI,
-ошибки конфигурации, API и структуры. Реальный вызов выполняется отдельно
-после настройки и разрешения пользователя.
-Также проверяются pause/resume, утверждение и отмена, замена плана, повторный
-ввод после ошибок, EOF/Ctrl+C, отсутствие повторной генерации, изоляция thread_id,
-отсутствие мутаций входного состояния и чистый JSON в stdout.
-Поиск проверяется подменной функцией и настоящим TavilyClient с локальным
-HTTP-адаптером: параметры и таймаут, маршруты approve/edit/cancel, запрос на
-каждый раздел, дедупликация, пустая выдача, ошибочные ответы, HTTP-ошибки,
-отсутствие ключа и лимит длины. Реального подключения к Tavily эти тесты
-не подтверждают. Модель и поиск вызываются реально только по отдельному разрешению.
+Основной набор использует подмены модели и поиска. HTTP, restart и clean-checkout проверки включаются отдельно в изолированном окружении; команды и предусловия — в [документации](docs/operations.md#проверки).
 
-Report/Persistence проверяются во временных каталогах с настоящим SQLite-файлом:
-References, неизвестные ID, UTF-8, атомарная замена, отсутствие дублей, ошибки
-генерации/записи, Resume после ошибки и завершения, изоляция Threads, отсутствие
-ключей в Checkpoints. `persistence_worker.py` запускается тестом в отдельных
-subprocess: Pause → новый процесс Resume → ещё один процесс завершённого Resume.
-Plan во втором процессе запрещён тестом; все сервисы подменены. HTTP-запрос Report
-проверяется настоящим ChatOpenAI через локальный MockTransport, без сети и оплаты.
+## Границы применения
 
-`test_parallel_search.py` дополнительно проверяет реальное перекрытие Workers
-через Event с ограниченными ожиданиями, лимит 2, разный порядок завершения,
-Fan-in/Report один раз, полноту batches и Worker partial updates без мутаций.
-После сбоя ветки закрывается SQLite-соединение и создаётся новый saver/Graph:
-успешная Task не повторяется, failed повторяется, дубликатов нет. Старые Threads
-версии 1 проверяются на отказ CLI без API и удаления базы. Проверки многосекционных
-планов используют искусственный Plan, а не меняют компактный System Prompt.
+- Приложение рассчитано на локальный запуск: серверы слушают loopback. `user_id` разделяет данные, но не заменяет аутентификацию.
+- Отчёты основаны на snippets поиска. Полные страницы не загружаются; ссылка не гарантирует фактическую точность вывода модели.
+- Checkpoints сохраняют успешные результаты, однако незавершённый внешний вызов при Resume может повториться. Exactly-once не гарантируется.
+- Оценка контекста приблизительная. Structured output и token streaming зависят от выбранной модели.
+- Публичный хостинг, авторизация и production-инфраструктура требуют отдельной настройки.
 
-`test_chat.py`, `test_chat_session.py`, `test_chat_provider.py` проверяют прямой
-ответ, фактический ToolNode/ToolMessage, второй вопрос без дублей, лимиты,
-изоляцию, валидацию ID/режимов/материалов и ошибки без раскрытия секретов.
-`chat_worker.py` используется в двух subprocess с одним SQLite-файлом: следующий
-процесс восстанавливает предыдущую историю. Research-сервисы запрещены подменами.
-Настоящий ChatOpenAI/bind_tools проверяется только локальным httpx.MockTransport;
-реальных API, сети и оплаты в тестах нет.
+## Документация
 
-`test_context.py`, `test_chat_context_graph.py` и `context_worker.py` проверяют
-Filter/Trim по целым Tool-блокам, пороги и инкрементальное Summary, отсутствие
-дублирования, бюджеты до модели и после Tools, ошибки пересказа, изоляцию и
-восстановление Summary/границы/истории и Subgraph в разных процессах.
-`test_chat_streaming.py` проверяет updates/messages с Namespace, выдачу chunks
-до окончания генерации, сокрытие Summary/Tools/reasoning, единственный JSON,
-обычный режим, Resume и отсутствие второго запуска ради финала.
-
-`test_history.py`, `test_breakpoints.py`, `test_time_travel.py`,
-`test_checkpoint_cli.py` и `breakpoint_worker.py` проверяют чтение без API/записи,
-принадлежность ID, отказ для Chat/неподдерживаемых точек, три процесса Dynamic →
-Static → completed, Replay/Fork с новым Review без повторного Plan, неизменность
-исходных Checkpoints/Report, отсутствие смешивания Reducers, восстановление после
-ошибки записи с прежним artifact_id/путём и Chat, закреплённый за выбранным Report.
-
-`test_user_memory.py`, `test_memory_agent.py`, `test_memory_cli.py` и
-`memory_worker.py` проверяют настоящий Store/async batch, Namespace-prefix,
-фильтры/пагинацию/timestamps, rollback, Profile patch и CRUD Collection, квитанции
-повторных вызовов, детерминированный отбор и бюджет, Tool Calling/Runtime Context,
-защиту владельца/пути/UUID и отсутствие ложного успеха. В отдельных процессах
-Chat A сохраняет Profile, Chat B того же пользователя получает его, другой
-пользователь не получает; Resume после записи не дублирует Note. Streaming
-проверяет один JSON и отсутствие полного содержимого Store в прогрессе.
+- [Архитектура и решения](docs/architecture.md)
+- [Запуск, данные и проверки](docs/operations.md)
+- [Interview Workflow](research_assistant/interview/README.md)
+- [Команда аналитиков](research_assistant/team/README.md)

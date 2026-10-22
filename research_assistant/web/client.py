@@ -32,6 +32,10 @@ class EventProjection:
 
     def accept(self, event, data):
         if event.split('|')[0] == 'custom':
+            if isinstance(data,dict) and 'analyst_id' in data:
+                from research_assistant.team.progress import project_team_progress
+                projected=project_team_progress(data,self.run_id)
+                return ('team-progress',projected) if projected else None
             from research_assistant.interview.progress import project_progress
             projected = project_progress(data, self.run_id)
             return ('interview-progress', projected) if projected else None

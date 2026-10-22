@@ -7,21 +7,21 @@ from research_assistant.graph import build_graph
 
 def demo_plan(topic: str) -> dict:
     """Return a deterministic plan from the normalized topic without a model."""
-    return {'title': f'Учебный план: {topic}', 'sections': [
+    return {'title': f'Демонстрационный план: {topic}', 'sections': [
         {'title': 'State и Human-in-the-Loop', 'questions': ['Как меняется State после Review?']}]}
 
 
 def demo_search(query: str) -> list[dict]:
     """Return synthetic source data; the URL is never fetched."""
-    return [{'title': 'УЧЕБНАЯ ПОДМЕНА поиска', 'url': 'https://example.com/studio-demo',
-             'snippet': 'УЧЕБНАЯ ПОДМЕНА: Review приостанавливает Graph до решения человека.'}]
+    return [{'title': 'DEMO поиска', 'url': 'https://example.com/studio-demo',
+             'snippet': 'DEMO: Review приостанавливает Graph до решения человека.'}]
 
 
 def demo_report(topic: str, plan: dict, sources: list[dict]) -> dict:
     """Produce a local ReportDraft-shaped value with actual supplied source IDs."""
-    return {'title': f'УЧЕБНАЯ ПОДМЕНА: {topic}', 'sections': [
+    return {'title': f'DEMO: {topic}', 'sections': [
         {'title': section['title'],
-         'text': 'УЧЕБНАЯ ПОДМЕНА. ' + ' '.join(source['snippet'] for source in sources),
+         'text': 'DEMO. ' + ' '.join(source['snippet'] for source in sources),
          'source_ids': [source['id'] for source in sources]}
         for section in plan['sections']]}
 

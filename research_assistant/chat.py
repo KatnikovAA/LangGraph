@@ -145,7 +145,7 @@ def begin_turn(state: ChatState) -> dict:
     if not isinstance(question, str) or not question.strip():
         raise ChatError('Вопрос не должен быть пустым.')
     validate_materials({key: state[key] for key in ('research_thread_id', 'report_markdown', 'sources')},
-                      allow_empty=server and state.get('chat_settings', {}).get('material_mode') == 'interview')
+                      allow_empty=server and state.get('chat_settings', {}).get('material_mode') in ('interview','team'))
     validate_history(state.get('messages', []))
     return {'question': question, 'messages': [HumanMessage(content=question.strip())], 'model_calls': 0,
             'tool_calls_used': 0, 'stop_requested': False, 'answer': '', 'status': 'answering'}

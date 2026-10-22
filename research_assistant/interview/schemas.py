@@ -32,6 +32,8 @@ def validate_interview_input(topic: str, clarification: str) -> dict:
 
 
 class InterviewState(TypedDict, total=False):
+    analyst_id: str
+    focus: str
     topic: str
     normalized_topic: str
     clarification: str

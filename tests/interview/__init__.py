@@ -1,1 +1,1 @@
-"""Stage 12 interview tests."""
+"""Interview workflow tests."""

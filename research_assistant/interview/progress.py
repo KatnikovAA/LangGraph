@@ -6,6 +6,7 @@ from langgraph.config import get_stream_writer
 LABELS = {'prepare_interview': 'Проверяем тему и роль', 'ask_question': 'Аналитик формулирует вопрос',
           'search_sources': 'Ищем источники', 'answer_question': 'Эксперт готовит ответ',
           'summarize_interview': 'Собираем итог', 'save_report': 'Сохраняем отчёт'}
+LABELS.update(prepare_analysts='Готовим роли',collect_interviews='Собираем оба интервью',generate_team_report='Формируем общий отчёт')
 
 
 def project_progress(data: dict, run_id: str) -> dict | None:
@@ -30,6 +31,10 @@ def tracked(node, function):
         if node == 'ask_question':
             round_number = len(state.get('answers', [])) + 1
         base = {'node': node, 'round': round_number, 'execution_id': str(uuid4()), 'label': LABELS[node]}
+        if state.get('analyst_id'):
+            base['analyst_id']=state['analyst_id']
+        elif state.get('workflow',{}).get('mode')=='team' or node=='prepare_analysts':
+            base['analyst_id']='parent'
         writer = get_stream_writer()
         def emit(status):
             event = {**base, 'status': status, 'timestamp': datetime.now(timezone.utc).isoformat()}

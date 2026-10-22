@@ -22,10 +22,13 @@ from research_assistant.web.client import EventProjection
 
 def projection(data):
     values = data.get('values') or {}
+    from research_assistant.team.progress import team_public_state
     return {'checkpoint_id': (data.get('checkpoint') or {}).get('checkpoint_id'),
         'next': data.get('next', []), 'status': values.get('status', 'new'),
         'topic': values.get('normalized_topic', values.get('topic', '')),
         'plan': values.get('plan'), 'report_markdown': values.get('report_markdown', ''),
+        'clarification':values.get('clarification',''),
+        'team':team_public_state(data) if values.get('workflow',{}).get('mode')=='team' else None,
         'interview': {k: values.get(k) for k in ('round', 'analyst_role', 'clarification', 'questions', 'answers', 'transcript', 'progress', 'limitations')}
                     if values.get('workflow', {}).get('mode') == 'interview' else None,
         'sources': values.get('sources', []), 'chat_settings': values.get('chat_settings'),
@@ -53,7 +56,8 @@ def create_app(settings=None):
         async with httpx.AsyncClient(timeout=3) as client:
             (await client.get(settings.agent_url + '/ok')).raise_for_status()
         await asyncio.to_thread(service.memory, 'readiness', 'get', {})
-        return JSONResponse({'ok': True, 'mode': settings.mode, 'agent_url': settings.agent_url})
+        return JSONResponse({'ok': True, 'mode': settings.mode, 'agent_url': settings.agent_url,
+                             'workflows':['research','interview','team','chat']})
 
     async def index(request):
         return FileResponse(static / 'index.html')
@@ -100,6 +104,8 @@ def create_app(settings=None):
                 raise ValueError('Ожидается JSON object.')
             allowed = {'create_research': {'request_id', 'topic'},
                 'create_interview': {'request_id', 'topic', 'clarification'},
+                'create_team': {'request_id','topic','clarification'},
+                'review_team': {'request_id','thread_id','decision'},
                 'review': {'request_id', 'thread_id', 'decision'},
                 'create_chat': {'request_id', 'research_thread_id', 'research_checkpoint_id', 'question', 'assistant'},
                 'ask': {'request_id', 'thread_id', 'question', 'assistant'},
@@ -172,7 +178,8 @@ def create_app(settings=None):
     app = Starlette(routes=[Route('/', index), Route('/health', health), Route('/ready', ready),
         Route('/events', events), Route('/report', report), Route('/api/{action}', api, methods=['GET', 'POST']),
         Mount('/static', StaticFiles(directory=static, check_dir=False)),
-        Mount('/interview-static', StaticFiles(directory=Path(__file__).parents[1] / 'interview' / 'static', check_dir=False))], lifespan=lifespan,
+        Mount('/interview-static', StaticFiles(directory=Path(__file__).parents[1] / 'interview' / 'static', check_dir=False)),
+        Mount('/team-static', StaticFiles(directory=Path(__file__).parents[1] / 'team' / 'static', check_dir=False))], lifespan=lifespan,
         exception_handlers={kind: expected_error for kind in (HTTPException, httpx.HTTPError, ValueError, KeyError, MemoryError, ChatError, PersistenceError)})
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=['127.0.0.1', 'localhost', '[::1]', 'testserver'])
     return app

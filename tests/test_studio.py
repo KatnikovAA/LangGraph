@@ -50,7 +50,7 @@ class StudioTests(unittest.TestCase):
                         self.assertNotIn('report_path', final)
                     else:
                         self.assertTrue(Path(final['report_path']).is_relative_to(Path(directory)))
-                        self.assertIn('УЧЕБНАЯ ПОДМЕНА', Path(final['report_path']).read_text(encoding='utf-8'))
+                        self.assertIn('DEMO', Path(final['report_path']).read_text(encoding='utf-8'))
                         if action == 'edit':
                             self.assertEqual(final['plan'], decision['plan'])
                     self.assertFalse((await graph.aget_state(config)).next)
