@@ -1,0 +1,10 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "research": "./research_assistant/server_graphs.py:create_research_graph",
+    "chat": "./research_assistant/server_graphs.py:create_chat_graph",
+    "concurrency": "./research_assistant/server_graphs.py:create_concurrency_graph"
+  },
+  "store": {"path": "./research_assistant/server_store.py:create_store"},
+  "env": {"LANGSMITH_TRACING": "false", "LANGCHAIN_TRACING_V2": "false", "LOG_COLOR": "false"}
+}

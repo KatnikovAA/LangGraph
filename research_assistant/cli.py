@@ -20,6 +20,8 @@ from research_assistant.chat import ChatError
 from research_assistant.chat_session import run_chat
 from research_assistant.history import research_history, research_checkpoint, describe_snapshot, stop_kind
 from research_assistant.time_travel import prepare_branch
+from research_assistant.memory_cli import COMMANDS, run_memory
+from research_assistant.user_memory import MemoryError
 
 
 def show_plan(plan: dict) -> None:
@@ -184,14 +186,42 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--summary-threshold', type=int, help='Порог пересказа истории нового Chat (1600)')
     parser.add_argument('--summary-budget', type=int, help='Приблизительный размер Summary нового Chat (512)')
     parser.add_argument('--recent-turns', type=int, help='Число последних завершённых реплик без пересказа (2)')
+    parser.add_argument('--user-id', help='Явный владелец памяти, не аутентификация')
+    parser.add_argument('--memory-db', help='Отдельный SQLite Store (по умолчанию .research_assistant/memory.sqlite)')
+    parser.add_argument('--memory-command', choices=COMMANDS, help='Управление памятью без модели')
+    parser.add_argument('--memory-json', help='JSON-объект для изменения памяти')
+    parser.add_argument('--memory-file', help='UTF-8 JSON-файл для изменения памяти')
+    parser.add_argument('--note-id', help='ID заметки текущего пользователя')
+    parser.add_argument('--memory-query', help='Вопрос для диагностики отбора заметок')
     args = parser.parse_args(argv)
     budget_flags = any(getattr(args, key) is not None for key in (
         'context_budget', 'answer_reserve', 'summary_threshold', 'summary_budget', 'recent_turns'))
+    memory_crud_flags = any(getattr(args, k) is not None for k in (
+        'memory_command', 'memory_json', 'memory_file', 'note_id', 'memory_query'))
+    if memory_crud_flags:
+        mixed = (any(getattr(args, k) is not None for k in ('topic', 'resume', 'history', 'inspect', 'replay', 'fork',
+                 'checkpoint_id', 'plan_file', 'research_checkpoint_id', 'discuss', 'chat', 'question', 'output_dir',
+                 'checkpoint_db')) or args.review or args.search or args.report or args.pause_after_plan
+                 or args.break_before_search or args.stream or budget_flags)
+        if mixed or args.memory_command is None:
+            print('Ошибка: memory-command допускает только user-id, memory-db, memory-json/file, note-id и memory-query.', file=sys.stderr)
+            return 2
+        try:
+            result = run_memory(args)
+        except MemoryError as error:
+            print(f'Ошибка: {error}', file=sys.stderr)
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    if (args.user_id is not None or args.memory_db is not None) and args.discuss is None and args.chat is None:
+        print('Ошибка: user-id/memory-db применяются к discuss/chat или memory-command.', file=sys.stderr)
+        return 2
     if args.history or args.inspect or args.replay or args.fork:
         incompatible = (args.topic is not None or args.resume is not None or args.review or args.search or args.report
             or args.pause_after_plan or args.output_dir is not None or args.discuss is not None or args.chat is not None
             or args.question is not None or args.stream or budget_flags or args.break_before_search
             or args.research_checkpoint_id is not None)
+        incompatible = incompatible or args.user_id is not None or args.memory_db is not None
         if (incompatible or (args.history is not None and (args.checkpoint_id is not None or args.plan_file is not None))
                 or (args.history is None and not args.checkpoint_id)
                 or (args.fork is not None) != (args.plan_file is not None)):
@@ -225,7 +255,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         try:
             result = run_chat(args)
-        except (ChatError, PersistenceError, ConfigurationError) as error:
+        except (ChatError, PersistenceError, ConfigurationError, MemoryError) as error:
             print(f'Ошибка: {error}', file=sys.stderr)
             return 2
         print(json.dumps(result, ensure_ascii=False, indent=2))

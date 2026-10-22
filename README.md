@@ -1,5 +1,64 @@
 # Technical Research Assistant
 
+Локальное приложение в браузере: тема → Review плана → поиск → Markdown-отчёт →
+обсуждение с историей и Streaming. Есть Profile/Notes между диалогами,
+Checkpoints/Fork/Replay и конфигурации Assistant brief/detailed.
+Web-путь использует настоящий Agent Server; прежний CLI сохранён.
+
+## Быстрый запуск Web Interface — Windows PowerShell
+
+```powershell
+Set-Location 'F:\AI Agent\LangGraph'
+py -3.12 -m venv .venv-web
+.\.venv-web\Scripts\python.exe -m pip install -r requirements-web.lock -e '.[web]'
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
+.\scripts\start-web.ps1
+Start-Process 'http://127.0.0.1:8080'
+```
+
+По умолчанию **Demo**, без платных API: сервисы модели/поиска детерминированные,
+Graph/ToolNode/Store/Checkpoints и серверный Streaming настоящие.
+Demo chunks синтетические; provider token streaming ими не подтверждается.
+Python >=3.11; фактически проверяется Windows/Python 3.12.14.
+
+- UI и BFF: `http://127.0.0.1:8080`, health `/health`, readiness `/ready`.
+- Agent Server: `http://127.0.0.1:2025`, API `/docs`.
+- Остановка: `.\scripts\stop-web.ps1`.
+- Live: после остановки Demo — `.\scripts\start-web.ps1 -Mode live`.
+  Ключи Polza/Tavily остаются в серверном `.env`; без них Live не стартует.
+  Остановка Live: `.\scripts\stop-web.ps1 -Mode live`.
+
+Данные Web Demo/Live раздельны: `.research_assistant/web/<mode>/` содержит
+`runtime/.langgraph_api` (native Threads/Checkpoints/Assistants), `memory.sqlite`
+(единый Store), `application.sqlite` (journal запросов) и `reports/`.
+Для backup штатно остановите оба процесса и скопируйте весь каталог.
+Старые CLI SQLite Threads не мигрируются автоматически. Локальный user_id —
+разделение данных, не аутентификация. Оба сервера доступны только на loopback.
+`langgraph dev` — локальная разработка, не production Deployment; внешней публикации нет.
+
+Основная стратегия Double Texting — явно `reject`. Настоящая практика четырёх
+стратегий и SDK-пример создания/применения Assistants:
+
+```powershell
+.\.venv-web\Scripts\python.exe scripts/api_examples.py
+.\.venv-web\Scripts\python.exe scripts/double_texting.py
+.\.venv-web\Scripts\python.exe -m unittest discover -s tests -q
+$env:RA_HTTP_TESTS='1'
+.\.venv-web\Scripts\python.exe -m unittest discover -s tests -p test_web_http.py -v
+Remove-Item Env:RA_HTTP_TESTS
+```
+
+HTTP-проверки запускайте только на работающем Demo. Отдельная проверка
+перезапуска и её предусловия описаны в руководстве.
+
+**[Итоговый разбор этапов 8–11 и Studio-практика](docs/final-walkthrough.md)**:
+карта файлов/функций, путь вопроса и памяти, ручные сценарии, backup,
+API/SDK, Assistants/Double Texting, ограничения и вопросы на понимание.
+Архитектура: `docs/superpowers/specs/2026-10-21-web-application-design.md`;
+план: `docs/superpowers/plans/2026-10-21-web-application.md`.
+
+## Прежний CLI
+
 Python-приложение принимает техническую тему и составляет структурированный план
 исследования на русском языке через LangGraph и Польза AI.
 По желанию план можно проверить, исправить и утвердить в терминале.
@@ -20,7 +79,8 @@ Tavily запрашивается с `max_results=1` на раздел; кажд
 
 Современная LangSmith Studio работает в браузере; отдельное desktop-приложение
 и Docker для `langgraph dev` не нужны. Это дополнительная практика Academy 1/3,
-не подтверждение изучения всего этапа 9. Chat Graph пока не зарегистрирован.
+не подтверждение изучения всего этапа 9. В прежнем `langgraph.json` зарегистрирован
+только Research; новый Web config `langgraph.web.json` содержит Research и Chat.
 
 Из корня проекта, один раз (отдельное окружение сохраняет зависимости CLI):
 
@@ -637,7 +697,8 @@ ToolNode через скрытый InjectedState; модель управляе�
   Report, компактным каталогом ID и Summary + отобранные последние Messages. SystemMessage и копия
   Report не добавляются к messages. Checkpointer сохраняет историю, но не решает,
   что получает модель: это делает код построения контекста.
-- Chat имеет отдельные `mode="report_chat"`, `version=3`, Research остаётся
+- Chat имеет отдельный `mode="report_chat"`: `version=3` без пользовательской памяти,
+  `version=4` с явным владельцем и Store. Research остаётся
   `mode="review_search_report"`, `version=2`. Совместимые Research Checkpoints
   читаются без миграции и изменений. Версия, режим, ID, база, привязка и совпадение
   материалов с закреплённым Research checkpoint_id проверяются перед продолжением.
@@ -662,7 +723,8 @@ exactly-once API-вызовов не гарантируется.
 Ответы запрашиваются краткими на русском (ориентир до 100 слов), но это инструкция,
 а не жёсткий лимит. Модель получает ограниченный контекст, полная история
 остаётся в Checkpoints. Память здесь — Short-Term Memory одного Thread
-в SQLite, не LangGraph Store и не Long-Term Memory. Чаты изолированы по ID.
+в SQLite. С этапа 10 отдельный Store предоставляет Long-Term Memory по user_id;
+истории Chat по-прежнему изолированы по Thread ID.
 Snippets остаются фрагментами Search API; их наличие не подтверждает чтение страниц
 и не гарантирует фактическую правильность ответа. Нового Web Search в диалоге нет.
 
@@ -985,7 +1047,234 @@ Chat A закреплён за T/CA; Chat B — за T/CB, независимо 
 `chat_session.py` (Research checkpoint pin). Новых зависимостей нет: StateSnapshot,
 get_state/history/update_state, Overwrite и interrupt_before — прежний LangGraph;
 ResearchPlan — прежний Pydantic; sqlite3, uuid, pathlib/hashlib — стандартный Python.
-Store, Long-Term Memory, Deployment и Time Travel для Chat не добавлены.
+На этапе 9 Store, Long-Term Memory, Deployment и Time Travel для Chat не добавлялись.
+
+## Agent with Long-Term Memory — этап 10
+
+Пользовательская память применяется только в обсуждении Report. Plan/Search/Report,
+Time Travel исследования и существующие файлы автоматически не меняются.
+Studio остаётся отдельной практикой: Memory Chat к нему здесь не подключается.
+
+### Store и схемы
+
+Используется настоящий `langgraph.store.sqlite.SqliteStore`, доступность и контракт
+проверены в установленном **langgraph-checkpoint-sqlite 3.1.2**. Минимальная версия
+существующей зависимости повышена до 3.1.2; новых пакетов нет. `SqliteSaver` остаётся
+Checkpointer, а отдельный SQLite Store хранит пользовательскую память.
+По умолчанию это `.research_assistant/memory.sqlite`; SQL-файлы и sidecars исключены
+из Git. Store и Checkpointer имеют независимый жизненный цикл и разные файлы.
+Соединения/клиенты не записываются в State, Profile или Collection.
+
+| Данные | Namespace | Key | JSON Value |
+| --- | --- | --- | --- |
+| Profile | `(user_id, "profile")` | `preferences` | language, style, code_language |
+| Collection | `(user_id, "notes")` | note_id | text, topic, tags, origin |
+| Квитанции операций | `(user_id, "memory_operations")` | hash операции | результат, namespace/key изменённой записи |
+| Идентичность Store | `("_research_assistant", "metadata")` | `identity` | UUID файла Store |
+
+Profile — одна Pydantic-запись. `language` — строка до 40 символов, `style` —
+`brief`, `balanced` или `detailed`, `code_language` — строка до 40 символов либо
+null. Default без записи: русский, brief, язык примеров не задан. Частичное
+обновление сохраняет остальные поля; null для code_language сбрасывает предпочтение.
+
+Note: непустой `text` до 600 символов, необязательная `topic` до 80, до пяти
+`tags` по 24 символа. `origin` содержит CLI-происхождение либо Chat Thread,
+Human turn ID и Tool Call ID. `created_at`/`updated_at` предоставляет Store;
+обновление сохраняет ID и created_at. Изменение одной записи не заменяет Collection.
+
+`LocalMemoryStore` — небольшое расширение native SqliteStore, а не новый SQL
+адаптер с нуля. Реализованы/проверены get/put/search/delete, batch и abatch
+(async через asyncio.to_thread); JSON и timestamps сохраняются. Search без query
+перечисляет Namespace **по компонентному префиксу**, а не по началу текста user_id.
+Поддерживаются простые фильтры равенства полей верхнего уровня, limit/offset,
+порядок updated_at DESC, затем namespace/key ASC. List namespaces использует
+native prefix/suffix/max_depth/pagination. JSON-объекты/списки в фильтре отвергаются.
+`query`, vector indexing и TTL явно не поддерживаются. Embeddings и Semantic
+Search отсутствуют; клиентам не нужны сервер и API-ключ.
+
+В native 3.1.2 обнаружен commit в finally у batch cursor. В локальном расширении
+сбой откатывает транзакцию, чтобы запись и квитанция применялись вместе;
+это проверено искусственной SQL-ошибкой. Параллельные частичные изменения Profile
+сериализуются внутри процесса; одновременные изменения из разных процессов не
+имеют гарантии слияния и могут следовать правилу последней записи.
+
+### Управление памятью без модели
+
+`user_id` — 1–64 латинских буквы/цифры/`_`/`-`; зарезервированное `langgraph`
+запрещено контрактом Store. Это разделение данных, **не аутентификация**.
+Пользователь с доступом к CLI может указать чужой ID; защищённый сервер здесь не добавлен.
+
+```powershell
+Set-Location 'F:\AI Agent\LangGraph'
+$userId = 'payk1'
+$memoryDb = 'F:\AI Agent\LangGraph\.research_assistant\memory.sqlite'
+
+# Один JSON-файл надёжнее передачи кавычек JSON через Windows PowerShell:
+@'
+{"language":"English","style":"brief","code_language":"Python"}
+'@ | Set-Content -LiteralPath '.\profile.json' -Encoding utf8
+
+.\.venv\Scripts\python.exe -m research_assistant --memory-command profile-update --user-id $userId --memory-db $memoryDb --memory-file '.\profile.json'
+.\.venv\Scripts\python.exe -m research_assistant --memory-command profile-show --user-id $userId --memory-db $memoryDb
+
+# Меняем только style, language/code_language сохраняются:
+@'
+{"style":"detailed"}
+'@ | Set-Content -LiteralPath '.\profile-patch.json' -Encoding utf8
+.\.venv\Scripts\python.exe -m research_assistant --memory-command profile-update --user-id $userId --memory-db $memoryDb --memory-file '.\profile-patch.json'
+
+@'
+{"text":"Использую LangGraph для обсуждения технических отчётов","topic":"LangGraph","tags":["LangGraph","Python"]}
+'@ | Set-Content -LiteralPath '.\note.json' -Encoding utf8
+$note = .\.venv\Scripts\python.exe -m research_assistant --memory-command note-add --user-id $userId --memory-db $memoryDb --memory-file '.\note.json' | ConvertFrom-Json
+$noteId = $note.result.id
+
+.\.venv\Scripts\python.exe -m research_assistant --memory-command note-list --user-id $userId --memory-db $memoryDb
+.\.venv\Scripts\python.exe -m research_assistant --memory-command note-show --user-id $userId --memory-db $memoryDb --note-id $noteId
+
+@'
+{"text":"Предпочитаю примеры StateGraph на Python"}
+'@ | Set-Content -LiteralPath '.\note-patch.json' -Encoding utf8
+.\.venv\Scripts\python.exe -m research_assistant --memory-command note-update --user-id $userId --memory-db $memoryDb --note-id $noteId --memory-file '.\note-patch.json'
+
+# Диагностика Profile и подходящих заметок с ID/причинами отбора:
+.\.venv\Scripts\python.exe -m research_assistant --memory-command retrieve --user-id $userId --memory-db $memoryDb --memory-query 'LangGraph StateGraph'
+
+.\.venv\Scripts\python.exe -m research_assistant --memory-command note-delete --user-id $userId --memory-db $memoryDb --note-id $noteId
+.\.venv\Scripts\python.exe -m research_assistant --memory-command profile-reset --user-id $userId --memory-db $memoryDb
+```
+
+Для небольшого JSON доступен `--memory-json`; он взаимоисключён с --memory-file.
+CRUD не вызывает Graph или модель. stdout — один JSON, ошибки — stderr/код 2.
+Сброс Profile удаляет preferences и возвращает default. Удаление Note удаляет
+одну запись Store, **но не стирает уже сохранённую историю и Checkpoints**.
+
+### Chat с Runtime Context и Tools
+
+```powershell
+$researchId = 'ВСТАВЬТЕ_COMPLETED_RESEARCH_THREAD_ID'
+
+# Новый Chat с памятью: user_id обязателен.
+$chat = .\.venv\Scripts\python.exe -m research_assistant --discuss $researchId --question 'Измени предпочтение: отвечай на English, кратко, примеры на Python' --user-id $userId --memory-db $memoryDb | ConvertFrom-Json
+$chatId = $chat.chat_thread_id
+$chat
+
+.\.venv\Scripts\python.exe -m research_assistant --chat $chatId --question 'Запомни: использую LangGraph с Python' --user-id $userId --stream
+.\.venv\Scripts\python.exe -m research_assistant --chat $chatId --question 'Объясни LangGraph по отчёту' --user-id $userId --stream
+
+# Resume после ошибки, без нового вопроса:
+.\.venv\Scripts\python.exe -m research_assistant --chat $chatId --user-id $userId --stream
+
+# Новый процесс и новый Chat того же пользователя получают прежний Profile:
+.\.venv\Scripts\python.exe -m research_assistant --discuss $researchId --question 'Объясни основной вывод' --user-id $userId --memory-db $memoryDb
+
+# Другой пользователь не получает Profile/Notes payk1:
+.\.venv\Scripts\python.exe -m research_assistant --discuss $researchId --question 'Объясни основной вывод' --user-id 'another_user' --memory-db $memoryDb
+```
+
+Для альтернативного Report сохраняется `--research-checkpoint-id CHECKPOINT_ID`.
+Без `--user-id` новый Chat создаётся в прежнем режиме v3 **без Store**, случайный
+default user не назначается. Chat v3 не превращается в пользовательский диалог
+при продолжении: создайте новый --discuss с --user-id. Memory Chat v4 требует
+тот же --user-id при каждом продолжении. Версии 1/2 по-прежнему отклоняются без
+удаления данных. Research остаётся версии 2.
+
+В chat_settings/memory_binding сохраняются user_id, абсолютный путь Store и его
+UUID, Thread ID и прежний Research checkpoint pin. При Resume пропущенный
+--memory-db восстанавливается из привязки; явно другой путь, другой UUID файла,
+отсутствующий файл или другой владелец отклоняются **до модели**. Checkpointer
+как Store не принимается. Store открывается на время CLI-команды и закрывается
+независимо от Checkpointer. `MemoryContext` передаётся через `context_schema`,
+Runtime/ToolRuntime и явный context в Subgraph, Store наследуется от Parent.
+Клиент/соединение в State не сохраняются.
+
+Graph:
+
+```text
+Parent: begin_turn → load_memory → context_gate → [summarize]
+        → prepare_context → Agent Subgraph → finish
+Subgraph: перед КАЖДЫМ вызовом agent заново читает Profile и выбирает Notes
+          agent → Router → ToolNode → agent / finish / stop
+```
+
+Каталог расширен тремя Tools: `update_profile(preferences)`, `save_note(note)`,
+`delete_note(note_id)`. get_source сохранён. user_id, Namespace, Store, Thread и
+Tool Call ID инжектируются приложением; модель их не выбирает. Лишние аргументы,
+попытки подменить runtime/user_id/namespace и невалидные значения не записываются.
+
+Запись разрешается только при явном начале **текущего Human-вопроса**:
+`Измени предпочтение…`, `Измени предпочтения…`, `Обнови профиль…`,
+`Запомни предпочтение…` для Profile; `Запомни…`/`Сохрани заметку…` для Notes;
+`Забудь заметку ID`/`Удали заметку ID` для удаления. Поддержаны соответствующие
+English-prefixes update profile/change preference, remember/save note,
+forget note/delete note. Это намеренно прозрачное правило разрешения; свободное
+перефразирование может потребовать такого явного начала. Report, Sources, Summary
+и старые сообщения разрешением на запись не являются.
+
+Успех определяется Store и ToolMessage. При ошибке/отказе или невалидном Tool
+Agent выдаёт контролируемое объяснение, не обращаясь к модели за потенциальным
+ложным подтверждением. Если на явный запрос модель ответила «сохранено», вообще
+не вызвав нужный Tool, финальный ответ заменяется сообщением, что операция не
+выполнялась. Часть параллельных операций могла уже сохраниться — их
+можно проверить CLI. Profile перечитывается перед следующим model call, поэтому
+обновлённое предпочтение действует в том же Agent Loop. Лимиты 3 model calls и
+3 Tool attempts, валидация истории и закрытие Tool Calls сохраняются.
+
+Идемпотентность Tool-записи: Key = hash(Chat Thread + Human Message ID + Tool Call ID
++ operation), внутри Namespace пользователя. Данные и квитанция операции пишутся
+одним batch. Повтор того же сохранённого вызова возвращает already_applied;
+вторая Note не создаётся. Если запись позже удалили, старый вызов её не воссоздаёт,
+present=false показывает отсутствие. Новый Turn/Tool Call — новая операция;
+повтор CLI note-add намеренно создаёт новую Note. Это не exactly-once для всех
+возможных сбоев, внешних эффектов или независимых повторов запроса.
+
+### Retrieval, бюджет и диагностика
+
+Это **обычный детерминированный отбор**, не Semantic Search: слова длиной от трёх
+символов без учёта регистра сопоставляются с text/topic/tags. Морфология и
+синонимы не учитываются. Нет совпадений — нет заметок в контексте. Порядок:
+число различных совпавших слов DESC, затем note_id ASC. Не более 3 Notes и 2400
+символов JSON Profile+Notes. CLI note-list сортирует ID и показывает всю Collection
+только по явной команде; в модель весь Store не вставляется.
+
+Память и расширенные Tool schemas входят в существующий приблизительный
+context-budget. Сначала Trim сокращает старые завершённые реплики; если текущий
+блок всё ещё не помещается, исключаются последние Notes в рейтинге. Текущий вопрос
+и Tool Call/ToolMessage блоки не разрываются. Если Report/правила/Tools/Profile/
+Summary и текущий блок не помещаются даже без Notes, вызова модели нет и CLI
+объясняет ошибку бюджета. Подсчёт остаётся приблизительным, не tokenizer Polza.
+
+Profile влияет на форму ответа; Notes — пользовательские данные, не доказательства
+фактов Report/Sources и не инструкции обойти правила. Summary хранит пересказ
+одного диалога, не заменяет Store и не является источником истины для Profile.
+Store перечитывается в новых выборках, поэтому удалённая запись туда не попадает,
+даже если её текст остался в старых сообщениях/Checkpoints.
+
+Ответ memory Chat дополнительно содержит `memory_selection.notes`: только
+фактически включённые ID и причины отбора; `memory_selection.operations` показывает
+Tool-результаты (status/id/present), а не предположение по тексту модели.
+Полные записи не печатаются в прогрессе
+Streaming; явная команда retrieve показывает Profile и ограниченную выборку.
+Memory-снимок/диагностика могут сохраняться в Checkpoints для воспроизводимости,
+но перед новым ответом данные перечитываются из Store.
+
+| Термин | Конкретное применение |
+| --- | --- |
+| Short-Term Memory | messages/Summary конкретного Chat Thread в Checkpointer |
+| Long-Term Memory | Profile/Notes одного user_id, общие для его разных Threads/процессов |
+| Store | Native LangGraph get/put/search/delete с постоянным SQLite backend |
+| Namespace | Приложение формирует (user_id, profile/notes), разделяя пользователей |
+| Key | preferences либо стабильный note_id внутри Namespace |
+| Profile | Одна валидируемая запись предпочтений с частичным обновлением |
+| Collection | Несколько отдельных Notes с ID и происхождением |
+| Retrieval | Детерминированный отбор подходящих Notes перед ответом |
+| Runtime Context | MemoryContext с user_id, Thread и Store path; не сохранённый SDK-клиент |
+
+Читать: `user_memory.py` (schemas/Store/CRUD/Retrieval/receipts) → `memory_tools.py`
+(Runtime Context и разрешение) → `chat_context.py` (бюджет) → `chat.py`
+(load_memory/Agent/Subgraph) → `chat_session.py` (владелец/путь/Resume) →
+`memory_cli.py`/`cli.py` (команды) → `chat_streaming.py` (безопасный прогресс).
+Deployment, сайт, Web Search, чтение страниц и Studio для Memory Chat не добавлены.
 
 ## Проверки
 
@@ -1047,3 +1336,12 @@ Filter/Trim по целым Tool-блокам, пороги и инкремен�
 Static → completed, Replay/Fork с новым Review без повторного Plan, неизменность
 исходных Checkpoints/Report, отсутствие смешивания Reducers, восстановление после
 ошибки записи с прежним artifact_id/путём и Chat, закреплённый за выбранным Report.
+
+`test_user_memory.py`, `test_memory_agent.py`, `test_memory_cli.py` и
+`memory_worker.py` проверяют настоящий Store/async batch, Namespace-prefix,
+фильтры/пагинацию/timestamps, rollback, Profile patch и CRUD Collection, квитанции
+повторных вызовов, детерминированный отбор и бюджет, Tool Calling/Runtime Context,
+защиту владельца/пути/UUID и отсутствие ложного успеха. В отдельных процессах
+Chat A сохраняет Profile, Chat B того же пользователя получает его, другой
+пользователь не получает; Resume после записи не дублирует Note. Streaming
+проверяет один JSON и отсутствие полного содержимого Store в прогрессе.

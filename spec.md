@@ -8,6 +8,102 @@ Python-приложение принимает техническую тему, 
 
 ## Текущее состояние
 
+### Общая практика Studio по этапам 9–11 — 2026-10-22
+
+Статус: в работе, учебный проход ещё не завершён. Academy 3: Breakpoints,
+Editing State, Time Travel; Academy 5: Profile/Collection и память между Threads;
+Academy 6: подключение к Agent Server, Assistants, отдельная практика Double Texting.
+Предпосылки: Research/Review, State, Checkpoints, Chat/Tools и Store.
+По предыдущей практике пользователь выполнил Research до completed и Static
+Breakpoint, редактировал Plan; результат Fork и продолжение ветки не подтверждены.
+Объяснение терминов не считается полным выполнением практики.
+
+План урока: один Research с Review/Breakpoint, безопасная альтернатива Plan,
+Chat с явной записью Profile/Note, второй Chat того же пользователя и проверка
+изоляции другого, сравнение Assistants и отдельный concurrency Graph.
+Приложение создаёт корректно привязанные Chat и безопасные ветки с artifact_id;
+Studio используется для inspection тех же серверных Threads/Checkpoints/Tools.
+Не создавать пустой raw Chat без Research pin, MemoryContext и seed.
+
+При подготовке обнаружено: сервер 2025 и UI 8080 работают в Live. Для урока
+запущены отдельные Demo Agent Server 2026 и UI 8081 с данными
+`.research_assistant/studio-lesson-20261022/`, без изменения работающего Live.
+Используются существующие web.agent/web entrypoints и langgraph.web.json,
+код и зависимости не изменяются. Tracing выключен, платные API не вызываются.
+Первый шаг пользователя: подключить Studio к 127.0.0.1:2026 и проверить Graph list.
+Завершение локального урока не закрывает внешнее Deployment или Live-приёмку.
+
+### Визуальное обновление Web UI — 2026-10-22
+
+Статус: реализация завершена; desktop проверен, мобильная визуальная приёмка открыта.
+Уточнение пользователя: обновить существующее приложение,
+используя присланную Kanban-картинку как визуальный референс, а не создавать изображение.
+Область: этап 11, Academy 6; предпосылки — существующие Research/Review/Chat,
+Persistence и Web Interface. Новое покрытие учебных тем не заявляется.
+Синяя боковая панель, светлая рабочая область, карточки и цветовые акценты;
+сохраняются реальные разделы, формы, DOM ID, API и Graph. Без новых пакетов.
+Приёмка: desktop/mobile layout, доступность форм и вкладок, сохранение
+существующих обработчиков, проверка доступных Web tests. Платные API не вызывать.
+
+
+### Этап 11 — API, Web Interface и Deployment
+
+Статус: локальная реализация завершена и автономно проверена 2026-10-21;
+пользовательская практика, Live и внешнее Deployment остаются открытыми.
+Academy 6: Deployment Concepts, Creating/Connecting, Assistants, Double Texting;
+закрепление Academy 0–5 по финальному руководству. Предпосылки — этапы 8–10.
+Используются настоящий Agent Server 0.16.2/SDK 0.4.8 и Starlette BFF, UI без npm.
+Agent Server 127.0.0.1:2025 (2024 занят прежней Studio), BFF/UI 127.0.0.1:8080.
+Основной путь: UI → BFF → SDK → существующий Graph, без CLI subprocess.
+Серверные данные отделены от CLI и прежней Studio: web/<demo|live>/runtime,
+memory.sqlite, application.sqlite, reports. Native custom Store lifecycle проверен.
+Chat имеет серверную версию web-1 и pin конкретного завершённого Research Checkpoint;
+CLI v3/v4 остаются совместимы со своими данными. Native Checkpointer инжектирует сервер.
+Memory Tools переиспользуют проверенные validation/owner/receipt/atomic batch.
+Assistant brief/detailed — настоящие server configs одного Chat; выбор config
+передаётся в Runtime Context явно, чтобы сохранённый Thread config не перекрыл
+новый Assistant. Приоритет: application → explicit request → Assistant → Profile.
+Основной Run strategy reject; enqueue/interrupt/rollback проверяются отдельно.
+Server Chat incoming_question не затирает текущий question при failed Run;
+Resume после отклонённого enqueue использует прежний pending Agent checkpoint.
+Demo — default, подмены явные; Live только явно и с server-side конфигурацией.
+Tracing выключен. Реальных платных запросов, commit/push и внешней публикации нет.
+Автономная приёмка завершена: 137 обычных проверок и отдельно 12 integration cases
+успешны. Подробные результаты и ограничения: docs/final-walkthrough.md.
+Независимый review частичный: три замечания исправлены; полного итогового отчёта нет. Ручное понимание пользователя
+и полная практика Studio UI пока не подтверждены. Local dev не production Deployment.
+
+### Этап 10 — Agent with Long-Term Memory
+
+Статус: завершён; автономно проверен. Academy 5 полностью: Short vs Long-Term Memory, Store,
+Memory Schema/Profile/Collection, Agent with Long-Term Memory. Предпосылки:
+этапы 7–9, Context Management, Runtime, Tool Calling и Checkpointer.
+Используется фактически установленный SqliteStore (checkpoint-sqlite 3.1.2),
+отдельный файл памяти, без embeddings/TTL/внешнего сервера. Namespace приложения:
+(user_id, profile)/preferences и (user_id, notes)/note_id. Chat с памятью получает
+явный user_id и pin пути Store; прежний Chat v3 остаётся без памяти и без
+default owner. Research и Studio не изменяются. Новая память передаётся через
+Runtime Context и учитывается в существующем бюджете, без автоматического
+извлечения из Report/Summary. Запись только по явному запросу. Без commit/push.
+Chat v4 с памятью сохраняет user_id, абсолютный путь/UUID Store и прежний Research
+checkpoint pin. Версии v1/v2 отклоняются, v3 продолжает работать без Store и без
+назначения владельца; для подключения памяти нужен новый Chat с --user-id.
+Profile: language/style/code_language, частичный patch и reset. Collection:
+text/topic/tags/origin, независимые note_id, timestamps, CLI CRUD и явные Tools
+update_profile/save_note/delete_note. Отбор: слова от трёх символов, пересечение
+text/topic/tags, рейтинг по числу совпадений и ID, максимум 3 Notes/2400 JSON-символов.
+Память/Tool schemas входят в бюджет; после Trim истории при необходимости
+исключаются Notes, текущий вопрос/Tool-блок не обрезаются. Profile перечитывается
+перед каждым вызовом Agent. В JSON memory_selection видны ID/причины и результаты
+операций Store; в Streaming полный Store не печатается. Факт записи не выводится
+из слов модели: отсутствие нужного Tool или ошибка дают контролируемый ответ.
+Идемпотентность сохранённого Tool Call — hash(Thread/Human ID/Tool Call ID/operation)
+и атомарная запись данных+receipt. UUID Store проверяется при Resume, чужая/новая
+база не подключается молча. Удаление Store-записи не стирает историю/Checkpoints.
+В SqliteStore сохранён native контракт get/put/search/delete, batch/abatch;
+локальный подкласс добавляет rollback batch, устойчивую сортировку и async bridge.
+Минимальная версия существующего checkpoint-sqlite повышена до 3.1.2; новых пакетов нет.
+
 ### Дополнительная практика Studio перед разбором этапа 9
 
 Статус: серверная настройка проверена; практика интерфейса в работе.
@@ -153,7 +249,8 @@ max_results=1; snippet обрезается локально до 500 симво
   на каждый раздел; сохраняемый snippet обрезается до 500 символов после проверки.
   Прежние требования о 3 разделах/80 словах и max_results=3 ниже заменены этим уточнением.
 
-- Последний выполненный этап: 9 — Breakpoints, Editing State и Time Travel.
+- Последний выполненный этап: 10 — Agent with Long-Term Memory.
+- Статус этапа 10: завершён; автономно проверен, реальные API не вызывались.
 - Статус этапа 9: завершён; 110 автономных тестов, реальные API не вызывались.
 - Статус этапа 8: завершён; автономные проверки, без реальных платных API.
 - Статус этапа 7: завершён; автономные проверки, без реальных платных API.
@@ -190,8 +287,8 @@ Studio рассматривается концептуально; установ
 | 2. State and Memory | State Schema — базовый разбор TypedDict/Pydantic, углубление впереди; State Reducers — operator.add реализован и автономно проверен в этапе 6, практика пользователя ещё не подтверждена; Multiple Schemas — ChatInput/ChatState/ChatOutput с runtime-проверками реализованы в этапе 7; разбор и практика пользователя ещё не подтверждены; Trim and Filter Messages, Summarizing Messages and Memory, Summarizing Messages and External Memory — реализованы и автономно проверены в этапе 8; разбор и практика пользователя ещё не подтверждены |
 | 3. UX and Human-in-the-Loop | Streaming — реализован и автономно проверен в этапе 8; token streaming реального провайдера и практика пользователя не подтверждены; Breakpoints — static interrupt_before реализован и автономно проверен в этапе 9; практика пользователя не подтверждена; Editing State and Human Feedback — реализованы и проверены автономно в этапе 3, практика пользователя ещё не подтверждена; Dynamic Breakpoints — interrupt реализован и проверен, в этапе 5 добавлен Resume из файлового Checkpoint между процессами; понимание и практика пользователя ещё не подтверждены; Time Travel — History/Inspection/native Replay/Fork реализованы и автономно проверены в этапе 9; практика пользователя не подтверждена |
 | 4. Building Your Assistant | Parallelization и Map-reduce — Send Workers/Fan-in реализованы и автономно проверены в этапе 6, практика пользователя ещё не подтверждена; Sub-graphs — compiled Agent Subgraph реализован и автономно проверен в этапе 8; практика пользователя не подтверждена; Research Assistant — Plan, Review, последовательный Web Search, Markdown Report и SQLite Persistence интегрированы и автономно проверены в этапе 5; практика пользователя ещё не подтверждена |
-| 5. Long-Term Memory | Short vs. Long-Term Memory — впереди; LangGraph Store — впереди; Memory Schema + Profile — впереди; Memory Schema + Collection — впереди; Agent with Long-Term Memory — впереди |
-| 6. Deployment | Deployment Concepts — впереди; Creating a Deployment — впереди; Connecting to a Deployment — впереди; Double Texting — впереди; Assistants — впереди |
+| 5. Long-Term Memory | Short vs. Long-Term Memory, LangGraph Store, Memory Schema + Profile, Memory Schema + Collection и Agent with Long-Term Memory — реализованы и автономно проверены в этапе 10; разбор/практика пользователя и Studio для Memory Chat не подтверждены |
+| 6. Deployment | Этап 11: локальный Agent Server/Client, Assistants и Double Texting реализованы и проверены real HTTP; Concepts/Creating/Connecting рассматриваются в финальном руководстве. Внешнее размещение и пользовательская практика отдельно не подтверждены; dev server не считается production Deployment |
 
 Исторические API курса сопоставлять с актуальными эквивалентами, объясняя различия.
 Если тема не подходит основному сценарию, разобрать её отдельно на данных этого
@@ -229,7 +326,8 @@ Studio рассматривается концептуально; установ
 Этап 7 реализован и проверен автономно; подтверждённой практики пользователя пока нет.
 Этап 8 реализован и проверен автономно; понимание пользователя не подтверждено.
 Этап 9 реализован и проверен автономно; понимание пользователя не подтверждено.
-Этапы 10–11 не реализованы и не считаются изученными.
+Этап 10 реализован и автономно проверен; практика пользователя не подтверждена.
+Локальная часть этапа 11 завершена и проверена; это не подтверждает изучение пользователем или облачную публикацию.
 Расширение состоит из пяти этапов 7–11; каждый получает один основной промпт реализации
 с последовательными проверяемыми подзадачами, объяснение, шпаргалку вне
 репозитория и блок «Дополнительно: желательно знать».
@@ -294,12 +392,14 @@ Reducers, Checkpointer и существующий готовый Report.
 
 ### Этап 10 — Long-Term Memory пользователя
 
-Статус: запланирован. Предпосылки: диалог, Short-Term Memory и схемы данных.
+Статус: завершён; автономно проверен. Предпосылки: диалог, Short-Term Memory и схемы данных.
+Наличие кода не подтверждает понимание пользователя; Studio-практика отдельно.
 
 - Academy 5 полностью: Short vs. Long-Term Memory, LangGraph Store,
   Memory Schema + Profile, Memory Schema + Collection, Agent with Long-Term Memory.
-- Profile: предпочтения языка и формата Report. Collection: отдельные сохранённые
-  пользовательские факты/заметки, полезные для будущих исследований.
+- Уточнение актуальным заданием: Profile задаёт язык/стиль ответов и язык примеров
+  только в обсуждении Report; Research/генерация отчётов автоматически не меняются.
+  Collection — отдельные пользовательские заметки для новых диалогов.
 - Разобрать namespaces, user_id, чтение, обновление и выбор релевантной памяти.
   Checkpointer и Store объяснить как разные механизмы, даже при локальном хранении.
 - Критерии: новый Thread того же пользователя получает нужные предпочтения;
@@ -307,9 +407,42 @@ Reducers, Checkpointer и существующий готовый Report.
   несколько отдельных записей; память сохраняется после перезапуска; показано,
   какие именно записи попали в контекст модели и почему.
 
-### Этап 11 — Deployment и подготовка репозитория к использованию
+### Этап 11 — финальный: API, Web Interface и Deployment
 
-Статус: запланирован. Предпосылки: работающий Graph, конфигурация и проверки.
+Статус: локальная реализация завершена и автономно проверена 2026-10-21.
+Архитектура и план согласованы; выполнены в текущем чате.
+Открыто: пользовательская практика, Live и внешнее Deployment.
+Предпосылки: работающий Graph, конфигурация и проверки.
+
+Уточнение 2026-10-21: этап 10 уже реализован и повторно не объединяется с новой
+реализацией. По запросу пользователя вся оставшаяся работа, включая Web Interface,
+объединяется в один финальный этап 11 и один основной промпт. Отдельного этапа 12
+для интерфейса нет. Реализация, автономные проверки, пользовательская практика
+и внешнее размещение учитываются отдельно.
+
+- Итог: локальное приложение в браузере для полного пути Topic → Plan Review →
+  Search → Report → Chat со Streaming и Long-Term Memory, с просмотром истории,
+  выбором результата/ветки и управлением Profile/Collection.
+- Переиспользовать этапы 8–10, не создавать параллельную реализацию Graph,
+  Summary, Time Travel или Store ради интерфейса. CLI сохранить.
+- Использовать настоящий Agent Server для предметных тем Assistants и
+  Double Texting; дополнительный web/backend adapter допустим для UI и прикладных
+  операций. Собственный HTTP endpoint или переключатель UI не заменяет эти темы.
+- Разделять серверные Threads/Store и существующие SQLite-данные CLI;
+  не обещать автоматическую миграцию. Проверить async/lifecycle и воспроизводимость
+  серверной Persistence, режима Resume и привязки Chat к конкретному Report.
+- Два режима: автономный Demo с явными подменами и настроенный Live.
+  Demo даёт проверить весь UI без платных вызовов. Live не запускать при проверках
+  без отдельного разрешения; секреты остаются на сервере.
+- Интерфейс: исследования/отчёты, Review, Chat/Streaming, пользователь и память,
+  история/ветки, конфигурация Assistant. Показывать реальные состояния выполнения,
+  ошибки, остановки и статус памяти; UI не должен имитировать работу модели.
+- Итоговые материалы: воспроизводимый запуск и остановка на Windows, настройки,
+  проверяемые API-примеры, сценарий демонстрации для GitHub и руководство по
+  чтению фактических файлов этапов 8–11 с ручными проверками и вопросами на понимание.
+- Studio-практику включить отдельным разделом того же финального руководства:
+  Research и Chat Graph, State/Subgraphs, Streaming, Checkpoints/Review,
+  Store между Threads, Assistants и Double Texting с учётом доступности UI/API.
 
 - Academy 0–1: закрепить окружение, ресурсы, обзор Studio и Intro to Deployment.
   Установка Studio остаётся необязательной по предпочтению пользователя.
@@ -325,6 +458,17 @@ Reducers, Checkpointer и существующий готовый Report.
   конкурентный ввод разобран и проверен; конфигурации Assistants продемонстрированы;
   секреты и локальные данные не публикуются. Для внешнего размещения и расходов
   согласовать конкретную среду; Git push выполняется только по отдельному запросу.
+
+Дополнительные критерии: автономный полный сценарий проверен через настоящий
+HTTP и браузер; второй вопрос не теряет историю; Profile работает между Threads
+после перезапуска выбранной среды; изоляция пользователей проверена на backend;
+Review не запускает поиск до approve; варианты не перезаписывают Reports;
+повторные запросы не порождают дубли Run; Assistants действительно меняют
+поддерживаемую конфигурацию одного Graph; политики Double Texting проверены
+через API и объяснены. Не считать disabled-кнопку проверкой конкурентных Run.
+Локальный dev server не объявлять production/cloud Deployment. Непройденные
+темы Academy или ручные проверки сохранять в явном списке остаточных критериев,
+не объявлять курс полностью освоенным по наличию реализации.
 
 ### Контроль полного покрытия
 
@@ -614,13 +758,86 @@ Academy: State Reducers (модуль 2), Parallelization и Map-reduce (мод�
 | 7 | Обсуждение отчёта: Chain, Agent и Agent with Memory | Завершён; автономно проверен |
 | 8 | Контекст диалога, Subgraphs и Streaming | Завершён; автономно проверен |
 | 9 | Управление выполнением и альтернативные версии исследования | Завершён; автономно проверен |
-| 10 | Long-Term Memory пользователя | Запланирован |
-| 11 | Deployment и подготовка репозитория к использованию | Запланирован |
+| 10 | Long-Term Memory пользователя | Завершён; автономно проверен |
+| 11 | Финальный: API, Web Interface и Deployment | В работе; локальный путь и автономная приёмка |
 
 Подробные требования и покрытие Academy приведены в согласованном плане выше.
 Статус реализации не заменяет подтверждение понимания и практики пользователя.
 
 ## Журнал выполнения
+
+### 2026-10-21 — объединение оставшейся работы в финальный этап 11
+
+- Пользователь сообщил о завершении этапа 10; его реализация Store и Memory
+  присутствует в файлах, статус и результаты прежних проверок сохранены.
+- Уточнён этап 11: API, Web Interface, оставшиеся темы Academy Deployment,
+  Studio-практика и разбор файлов/ручные проверки этапов 8–11 в одном задании.
+- Код не изменялся. Проверка спецификации: git diff --check -- spec.md.
+  Реализация финального этапа и пользовательская практика не заявляются завершёнными.
+
+### 2026-10-21 — этап 10: Agent with Long-Term Memory
+
+- Изучены задание, AGENTS/spec, фактические Chat/Context/Subgraph/CLI,
+  Persistence и тесты. Вложенных AGENTS нет; рабочее дерево было чистым.
+  Исходный набор: 112 тестов, 28.699 с, OK. Статус сначала «в работе».
+  Сохранены настройки отдельной Studio-практики Research; Memory Chat к Studio
+  не подключался. Уточнение задания заменяет прежнюю идею Profile для генерации
+  Report: в этапе 10 память действует только в обсуждении готового Report.
+- Context7: resolve-library-id LangGraph и отдельные query-docs по Store,
+  Runtime Context/ToolRuntime, persistent backend. Проверены реальные imports,
+  signatures и исходники установленного SqliteStore. Версии: LangGraph 1.2.16,
+  langchain-core 1.6.12, langchain-openai 1.7.2, checkpoint-sqlite 3.1.2.
+  Последняя зависимость уже существовала, её минимум повышен до 3.1.2;
+  новых пакетов нет. BaseStore контракт batch/abatch проверен на месте.
+- user_memory.py: LocalMemoryStore(SqliteStore), отдельный SQLite, Pydantic
+  Profile/ProfilePatch/NoteInput/Note, CRUD, timestamps и словарный Retrieval.
+  Native backend сохраняется; локальный subclass добавляет rollback ошибочного
+  batch (в native 3.1.2 обнаружен commit в finally), устойчивые tie-breakers
+  сортировки и abatch через asyncio.to_thread. get/put/search/delete, prefix
+  Namespace, scalar equality filter, limit/offset и async операции проверены.
+  TTL, Semantic Search и vector indexing явно не поддерживаются.
+- memory_tools.py: MemoryContext, ToolRuntime и update_profile/save_note/
+  delete_note. Namespace/владелец/Store задаются приложением, лишние model args
+  отвергаются. Разрешение — явный префикс текущего Human-вопроса, не материалы
+  исследования/Summary. Данные+receipt сохраняются одним batch. Hash включает
+  Thread, Human ID, Tool Call ID, operation; повтор сохранённого вызова не
+  дублирует заметку и не воссоздаёт позже удалённую. origin сохраняет происхождение.
+- Parent добавляет load_memory, Runtime Context и compile(store=store); compiled
+  Subgraph получает context и наследует Store. Agent перечитывает Profile перед
+  каждым model call, включая следующий после Tool. context_details учитывает
+  память/Tool schemas в бюджете; сначала Trim истории, затем исключение Notes,
+  текущий блок не разрывается. Отбор: пересечение слов от трёх символов по
+  text/topic/tags, рейтинг совпадения DESC/ID ASC, максимум 3 Notes/2400 JSON-символов.
+  Нет совпадений — нет Notes. memory_selection содержит ID/причины/Tool результаты.
+- Store failure/отказ вызывает контролируемое объяснение без новой генерации.
+  Red test выявил ложное «сохранено» вообще без Tool: итог теперь заменяется
+  сообщением о невыполненной операции. Факт записи не определяется текстом модели.
+- memory_cli.py/cli.py добавляют управление Profile/Collection/retrieve без модели
+  и --user-id/--memory-db для Chat. chat_session.py проверяет owner, путь/UUID Store,
+  восстанавливает Runtime при Resume и не подключает другую память молча.
+  Checkpointer как Store отвергается. Memory Chat v4; v3 остаётся без владельца/
+  Store, v1/v2 отклоняются без удаления. Research v2 и Research checkpoint pin
+  сохраняются. .gitignore исключает SQLite и sidecars; README содержит команды.
+- Новые test_user_memory.py, test_memory_agent.py, test_memory_cli.py и
+  memory_worker.py покрывают 16 групп критериев: общий Profile и изоляцию,
+  несколько процессов, patch/CRUD, отбор/бюджет, реальные Tools, обычный вопрос
+  без записи, ошибки/ложный успех, idempotency/Resume, подмену user/runtime/
+  Namespace/Store, обновлённый Profile в Loop, legacy policy и прежние режимы.
+  SQL trigger проверяет rollback, async — настоящий abatch. Streaming не печатает
+  полный Store. Отдельные процессы проверяют A сохраняет → B читает → другой
+  пользователь не получает; ещё два процесса проверяют Resume после записи.
+- Финал: unittest discover -s tests -q — 126 тестов, 36.135 с, OK, код 0.
+  compileall — код 0; pip check — No broken requirements found;
+  git diff --check — код 0 (LF/CRLF warnings). git check-ignore подтвердил
+  memory.sqlite и sidecars. Windows/Python 3.12.14; остальные версии не запускались.
+  Fake models/локальные БД/MockTransport; реальных платных API нет, .env не менялся.
+- Ограничения: user_id не аутентификация; Retrieval без синонимов/морфологии,
+  бюджет приблизительный, следование Profile реальной Polza-моделью не проверено.
+  Межпроцессное слияние одновременных patches и exactly-once вне сохранённого
+  Tool Call не гарантируются. Удаление не стирает старую историю/Checkpoints;
+  receipts остаются. Studio для Memory Chat, Deployment, сайт, Web Search и
+  embeddings не добавлены. Понимание пользователя не отмечено подтверждённым.
+  Commit/push не выполнялись.
 
 ### 2026-10-21 — дополнительная практика Studio: подготовка
 
@@ -1202,3 +1419,68 @@ Academy: State Reducers (модуль 2), Parallelization и Map-reduce (мод�
   compileall и git diff --check — код 0. Платные API не вызывались.
 - Публикуются конфигурация локального сервера, offline Research Graph, тесты и документация.
 - Практика интерфейса остаётся в работе. .env, окружения, Checkpoints и отчёты исключены из Git.
+
+
+### 2026-10-21 — локальная приёмка этапа 11
+
+- Research → Review/edit/cancel → Search → Report → Chat работает через настоящий
+  Agent Server/SDK и Web BFF; прежний CLI сохранён. Memory, Summary, History/Fork,
+  точный checkpoint pin, Assistants и четыре Double Texting strategies проверены.
+- Новое .venv-web: 149 discovered, 137 executed, 12 integration skipped, OK, 43.396с.
+  Отдельно integration: HTTP 10/10 (93.325с), restart 1/1 (10.548с),
+  clean-source checkout + отказ Live без ключей 1/1 (13.267с).
+- Прежнее .venv: 135 executed, 14 optional/integration skipped, OK, 40.341с.
+  pip check обоих окружений, compileall и git diff --check успешны.
+- Browser E2E: Research/Chat/Memory/Fork, reload, изоляция пользователя;
+  viewport 375×812 и 1280×900 без горизонтального переполнения.
+- Частичный независимый review выявил три замечания: recovery, runtime integrity,
+  Resume по Turn ID. Исправлены и покрыты regression checks. Reviewer прервался
+  по лимиту; полного завершённого независимого review нет.
+- Руководство и матрица H1–H16: docs/final-walkthrough.md. Код реализован,
+  но понимание пользователем тем Academy 0–6 не отмечается завершённым автоматически.
+- Не выполнялись платные API calls, внешнее размещение, commit/push. Ограничения:
+  локальный runtime, нет production auth, ограничение списков 100 записями,
+  приблизительный budget; Live quality, crash recovery и multi-worker не проверены.
+
+
+### 2026-10-22 — диагностика первого Live запуска
+
+- Пользователь разрешил Live с Польза AI и Tavily. Первый Run остановился
+  на generate_plan: PlanGenerationError подключения, сетевой probe получил
+  WinError 10013 в sandbox. Сервер перезапущен с одобренным повышением доступа.
+- Исправлена статическая подпись Demo: footer теперь соответствует /ready.mode.
+- Успешный платный Run пока не подтверждён; повтор выполняет пользователь.
+
+
+### 2026-10-22 — дизайн существующего Web Interface
+
+- По прямому уточнению пользователя переработан настоящий Web UI по присланному
+  референсу: синяя sidebar, светлый canvas, карточки, вкладки и цветовые акценты.
+- Изменены только static/index.html, static/style.css и эта спецификация.
+  62 уникальных DOM ID; все literal ID references из app.js найдены в HTML.
+  Обработчики app.js, BFF, API и Graph сохранены, новых dependencies нет.
+- Добавлены skip-link, видимый focus, адаптивные layouts <=1100/760px,
+  перенос вкладок и четырёх справочных карточек этапов. Карточки описывают
+  workflow, не изображают фактический прогресс Run.
+- Браузер: проверены Research, Chat, Memory (чтение), History на текущем desktop
+  viewport; Live отображается явно. Модель и поиск не вызывались.
+  Для осмотра выбрано локальное рабочее пространство ui_preview.
+- unittest discover -s tests -p test_web_service.py -q: 3 tests, OK (1.406с).
+  HTMLParser/проверка DOM ID: успешно; git diff --check: код 0.
+- Ограничение: отдельный mobile viewport недоступен в использованном browser API;
+  data-URL preview отклонён политикой браузера. Mobile layout задан CSS,
+  но визуальная проверка 375px, полноценный E2E Research/Review/Chat и проверка
+  реального Live Run в рамках редизайна не выполнялись. Commit/push не выполнялись.
+- Покрытие и понимание пользователем тем Academy не изменены.
+
+### 2026-10-22 — публикация памяти и локального Web-приложения
+
+- Пользователь поручил продолжить разрешённые commit/push текущих изменений в origin/main.
+  Прежние ограничения на коммиты из плана реализации этим указанием сняты.
+- Перед публикацией в .venv-web: unittest discover -s tests -v — 149 обнаружено,
+  137 выполнено, 12 integration cases пропущено, 44.910 с, OK.
+- compileall, pip check и git diff --check прошли. Отдельные HTTP/restart/checkout
+  integration cases повторно не запускались; платные API не вызывались.
+- Публикуются Long-Term Memory, Agent Server, локальное Web-приложение, тесты и документация.
+- Учебная практика Studio и мобильная визуальная приёмка остаются открытыми.
+- .env/.env.web, окружения, локальные БД и отчёты исключены из Git.

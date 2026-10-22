@@ -13,12 +13,13 @@ def visible_text(chunk) -> str:
                    and isinstance(block.get('text'), str))
 
 
-def stream_chat(graph, graph_input, config) -> dict:
+def stream_chat(graph, graph_input, config, *, context=None) -> dict:
     print('Готовим контекст', file=sys.stderr, flush=True)
     token_seen = False
     active_message = None
     # Default v1 format supported by installed LangGraph: (namespace, mode, payload).
-    for namespace, mode, payload in graph.stream(graph_input, config, durability='sync',
+    context_options = {'context': context} if context is not None else {}
+    for namespace, mode, payload in graph.stream(graph_input, config, durability='sync', **context_options,
                                                  stream_mode=['updates', 'messages'], subgraphs=True):
         if mode == 'updates':
             for node, update in payload.items():
@@ -30,7 +31,9 @@ def stream_chat(graph, graph_input, config) -> dict:
                     print('\nФормируем ответ', file=sys.stderr, flush=True)
                 elif namespace and node == 'agent' and not update.get('stop_requested') and any(
                         getattr(m, 'tool_calls', []) for m in update.get('messages', [])):
-                    print('\nЧитаем источник', file=sys.stderr, flush=True)
+                    memory_call = any(call['name'] in ('save_note', 'update_profile', 'delete_note')
+                                      for m in update.get('messages', []) for call in getattr(m, 'tool_calls', []))
+                    print('\nОбрабатываем запрос памяти' if memory_call else '\nЧитаем источник', file=sys.stderr, flush=True)
                 elif namespace and node == 'tools':
                     print('\nФормируем ответ', file=sys.stderr, flush=True)
         elif mode == 'messages':

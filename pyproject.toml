@@ -9,7 +9,7 @@ description = "Plan technical research with LangGraph and Polza AI"
 requires-python = ">=3.11"
 dependencies = [
     "langgraph>=1.0,<2.0",
-    "langgraph-checkpoint-sqlite>=3.0,<4.0",
+    "langgraph-checkpoint-sqlite>=3.1.2,<4.0",
     "langchain-openai>=1.0,<2.0",
     "pydantic>=2.7,<3.0",
     "python-dotenv>=1.0,<2.0",
@@ -22,6 +22,10 @@ research-assistant = "research_assistant.cli:main"
 
 [project.optional-dependencies]
 studio = ["langgraph-cli[inmem]>=0.4,<1.0"]
+web = ["langgraph-cli[inmem]==0.4.37", "langgraph-api==0.16.2", "langgraph-sdk==0.4.8", "starlette==1.9.0", "uvicorn>=0.34,<1", "httpx==0.28.1"]
 
 [tool.setuptools.packages.find]
 include = ["research_assistant*"]
+
+[tool.setuptools.package-data]
+"research_assistant.web" = ["static/*"]
